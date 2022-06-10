@@ -1,0 +1,27 @@
+[package]
+name = "kernel_main"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+kernel_cpu = { path = "../kernel_cpu" }
+kernel_trap_frame = { path = "../kernel_trap_frame" }
+spin = "*"
+kernel_allocator = { path = "../kernel_allocator" }
+kernel_executor = { path = "../kernel_executor" }
+kernel_lock = { path = "../kernel_lock" }
+kernel_printer = { path = "../kernel_printer" }
+kernel_sbi = { path = "../kernel_sbi" }
+kernel_chip_drivers = { path = "../kernel_chip_drivers" }
+static-box = "*"
+
+[profile.dev]
+opt-level = 0
+lto = false
+panic = "abort"
+
+[features]
+backtrace = []
+autodebug = ["backtrace"]
+default = ["autodebug"]

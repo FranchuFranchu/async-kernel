@@ -1,0 +1,12 @@
+[package]
+edition = "2021"
+name = "kernel_lock"
+version = "0.1.0"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+kernel_cpu = { path = "../kernel_cpu" }
+kernel_trap_frame = { path = "../kernel_trap_frame" }
+lock_api = {version = "0.4", features = ["nightly"]}
+log = "*"

@@ -1,0 +1,14 @@
+[package]
+name = "kernel_chip_drivers"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cstr_core = "*"
+kernel_lock = { path = "../kernel_lock" }
+num_enum = {version = "0.5", default-features = false}
+kernel_printer = { path = "../kernel_printer" }
+kernel_cpu = { path = "../kernel_cpu" }
+log = "*"

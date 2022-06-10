@@ -1,0 +1,9 @@
+[workspace]
+members = [
+	"kernel_main",
+	"kernel_allocator",
+	"kernel_executor",
+	"kernel_sbi",
+	"kernel_paging",
+	"kernel_printer"
+]
