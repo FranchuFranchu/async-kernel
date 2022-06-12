@@ -17,7 +17,7 @@ use kernel_chip_drivers::plic::Plic0;
 use kernel_cpu::csr::XCAUSE_DESCRIPTION;
 use kernel_executor::{ExecutorFuture, run_in_parallel, Executor};
 use alloc::boxed::Box;
-use kernel_cpu::{write_stvec, write_sie, write_sstatus, read_sstatus, write_sscratch, read_scause, read_sscratch};
+use kernel_cpu::{write_stvec, write_sie, write_sstatus, read_sstatus, write_sscratch, read_scause, read_sscratch, read_satp};
 use kernel_trap_frame::TrapFrame;
 use wait_future::WaitForFunctionCallFuture;
 
@@ -78,10 +78,19 @@ fn setup_hart_trap_frame(hartid: usize, hart_locals: HartLocals) -> Box<TrapFram
 	Box::new(trap_frame)
 }
 
+#[no_mangle]
+pub fn rust_oom() {
+	loop {}
+}
 
 #[no_mangle]
-pub fn main(mut hartid: usize, opaque: usize) -> ! {
-	unsafe { kernel_allocator::init_from_pointers(&_heap_start as *const _ as *const _, &_heap_end as *const _ as *const _) };
+pub extern "C" fn main(mut hartid: usize, opaque: usize) -> ! {
+	unsafe { (0x1000_0000 as *mut u8).write_volatile(67) };
+	unsafe { (0x1000_0000 as *mut u8).write_volatile(0xa) };
+	let start: usize = 0x8200_0000;;
+	let end: usize = 0x8800_0000;
+	kernel_allocator::init_from_pointers(start as *const _, end as *const _);
+	println!("{:?}", "Reached kernel!");
 	kernel_executor::run_neverending_future(alloc::boxed::Box::pin(async_main(hartid, opaque)))
 }
 
@@ -99,9 +108,12 @@ async fn async_main(hartid: usize, opaque: usize) -> ! {
 		});
 		frame.pid = 1;
 		frame.interrupt_stack = 0x84000000;
+		frame.satp = read_satp();
+		frame.kernel_satp = read_satp();
 		
 		write_sscratch(Box::leak(frame) as *mut _ as usize);
 	};
+	
 	
 	fdt::init(opaque as _);
 	
@@ -122,7 +134,7 @@ async fn async_main(hartid: usize, opaque: usize) -> ! {
     */
 	
 	
-	kernel_sbi::set_absolute_timer(0x100000).unwrap();
+	kernel_sbi::set_absolute_timer(0).unwrap();
 	
 	HartLocals::current().executor_handle.spawn(Box::new(Box::pin(
 		async {
@@ -165,6 +177,50 @@ fn hart_entry() {
 #[no_mangle]
 fn syscall_on_interrupt_disabled() {
 	loop {}
+}
+
+pub struct Uart {
+	address: *mut u8
+}
+
+impl core::fmt::Write for Uart {
+	fn write_str(&mut self, s: &str) -> core::fmt::Result {
+	    for i in s.bytes() {
+	    	unsafe { self.address.write(i) }
+	    };
+	    Ok(())
+	}
+}
+
+pub fn get_uart() -> Uart {
+	Uart { address: 0x1000_0000 as _ }
+}
+
+
+#[macro_export]
+macro_rules! print
+{
+    ($($args:tt)+) => (#[allow(unused_unsafe)] {
+            // Lock the output to prevent lines mixing between each other
+            use core::fmt::Write;
+            //let l = crate::std_macros::OUTPUT_LOCK.lock();
+            let _ = write!(get_uart(), $($args)+);
+            });
+}
+
+
+#[macro_export]
+macro_rules! println
+{
+    () => ({
+           print!("\r\n")
+           });
+    ($fmt:expr) => ({
+            print!(concat!($fmt, "\r\n"))
+            });
+    ($fmt:expr, $($args:tt)+) => ({
+            print!(concat!($fmt, "\r\n"), $($args)+)
+            });
 }
 
 

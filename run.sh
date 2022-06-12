@@ -10,10 +10,9 @@ export BITS=$1
 
 
 if [ "$GDB" == "yes" ]; then
-	lxterminal -e 'riscv'$BITS'-elf-gdb target/'$ARCH'-unknown-none-elf/debug/rust-0bsd-riscv-kernel\
+	lxterminal -e 'riscv'$BITS'-elf-gdb 'kernel/target/$ARCH/debug/kernel_pre_main'\
 	-ex "target remote tcp4:0:1234"\
-	-ex "break rust_0bsd_riscv_kernel::panic"\
-	-ex "alias print_hartids = p [\$mhartid, rust_0bsd_riscv_kernel::cpu::load_hartid()]"\
+	-ex "alias print_hartids = p [\$mhartid, kernel_main::cpu::load_hartid()]"\
 	-ex "alias phids = print_hartids"\
 	-ex "set history save on"\
 	' &
@@ -29,6 +28,8 @@ if [ "$GFX" == "yes" ]; then
 else
 	export QEMUOPTS="-nographic $QEMUOPTS"
 fi
+
+du -h kernel_payload.bin
 
 qemu-system-riscv$BITS $QEMUOPTS \
 	-machine virt \

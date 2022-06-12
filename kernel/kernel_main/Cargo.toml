@@ -16,11 +16,6 @@ kernel_sbi = { path = "../kernel_sbi" }
 kernel_chip_drivers = { path = "../kernel_chip_drivers" }
 static-box = "*"
 
-[profile.dev]
-opt-level = 0
-lto = false
-panic = "abort"
-
 [features]
 backtrace = []
 autodebug = ["backtrace"]

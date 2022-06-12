@@ -5,7 +5,13 @@ pub mod gpaging;
 
 // Abstractions over supervisor-mode paging
 extern crate alloc;
-#[cfg(test)] extern crate std;
+#[cfg(test)]
+#[macro_use] 
+extern crate std;
+
+#[cfg(not(test))]
+#[macro_use] 
+pub mod debug;
 use core::{
     fmt::Debug,
     ops::{Index, IndexMut},

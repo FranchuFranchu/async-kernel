@@ -4,6 +4,8 @@ use crate::EntryBits;
 
 use super::{Table, Entry, PageLookupError};
 
+use crate::*;
+
 pub struct GenericPaging<'table, const LEVELS: usize, const PTESIZE: usize> 
     where [(); 4096 / PTESIZE]: Sized{
 	pub table: &'table mut Table<PTESIZE>
@@ -139,6 +141,7 @@ impl<'table, const LEVELS: usize, const PTESIZE: usize> GenericPaging<'table, LE
 	    	let vpn_start = get_vpn_number(virt_start, level, PTESIZE) as usize;
 	    	let mut vpn_end = get_vpn_number(virt_end, level, PTESIZE) as usize;
         	let offset: usize = physical_addr.wrapping_sub(virtual_addr) >> 2;
+	    	
         	
         	if vpn_end < vpn_start {
         		vpn_end = 511;
@@ -167,15 +170,45 @@ impl<'table, const LEVELS: usize, const PTESIZE: usize> GenericPaging<'table, LE
 		    	}
 	    	}
 	    }
+	    let virtual_addr = Self::decanonicalize_address(virtual_addr);
+	    assert!(virtual_addr & 0xfff == 0);
+	    assert!(physical_addr & 0xfff == 0);
+	    assert!(length & 0xfff == 0);
     	map_internal::<PTESIZE>(LEVELS-1, self.table, physical_addr, virtual_addr, length, flags, 0);
     }
     pub unsafe fn query_physical_address(&self, virtual_addr: usize) -> Result<usize, PageLookupError> {
         self.query(virtual_addr)
     }
-    pub const fn maximum_virtual_address() -> usize {
+    pub const fn maximum_noncanon_virtual_address() -> usize {
         (1 << get_vpn_offset(LEVELS, PTESIZE)) - 1
     }
-    
+    /// Sign-extends an address
+    /// ```rust
+    /// # fn main() {
+    /// let address = 0x7fffffffff;
+    /// let canon = kernel_paging::gpaging::Sv39::canonicalize_address(address);
+    /// assert!(canon == 0xffffffffffffffff);
+    /// assert!(kernel_paging::gpaging::Sv39::canonicalize_address(0x7f12345678) == 0xffffffff12345678)
+    /// # }
+    /// ```
+    pub fn canonicalize_address(address: usize) -> usize {
+    	let uppermost_significant_bit = get_vpn_offset(LEVELS, PTESIZE) - 1;
+    	let higher_bits = usize::BITS as usize - uppermost_significant_bit as usize;
+    	let mask = (1 << higher_bits) - 1;
+    	let mask = mask << (uppermost_significant_bit + 1);
+    	if (address >> uppermost_significant_bit) & 1 != 0 {
+    		address | mask
+    	} else {
+    		address & (!mask)
+    	}
+    }
+    pub fn decanonicalize_address(address: usize) -> usize {
+    	let uppermost_significant_bit = get_vpn_offset(LEVELS, PTESIZE) - 1;
+    	let higher_bits = usize::BITS as usize - uppermost_significant_bit as usize;
+    	let mask = (1 << higher_bits) - 1;
+    	let mask = mask << (uppermost_significant_bit + 1);
+    	address & (!mask)
+    }
 }
 
 pub type Sv32<'table> = GenericPaging<'table, 2, 4>;
@@ -197,7 +230,7 @@ fn test() {
 	unsafe { assert!(table2.query(0x7fc0_0000).unwrap() == 0x7fc0_0000); }
 	unsafe { assert!(table2.query(0x1fc0_0000).unwrap() == 0x1fc0_0000); }
 	unsafe { assert!(table2.query(0x1020_0000).unwrap() == 0x1020_0000); }
-	std::println!("{:x}", Sv32::maximum_virtual_address());
-	std::println!("{:x}", get_vpn_offset(2, 4));
-	unsafe { assert!(Sv32::maximum_virtual_address() == 0xffffffff); }
+	println!("{:x}", Sv32::maximum_noncanon_virtual_address());
+	println!("{:x}", get_vpn_offset(2, 4));
+	unsafe { assert!(Sv32::maximum_noncanon_virtual_address() == 0xffffffff); }
 }

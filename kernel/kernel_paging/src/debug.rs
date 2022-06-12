@@ -1,0 +1,43 @@
+
+pub struct Uart {
+	address: *mut u8
+}
+
+impl core::fmt::Write for Uart {
+	fn write_str(&mut self, s: &str) -> core::fmt::Result {
+	    for i in s.bytes() {
+	    	unsafe { self.address.write(i) }
+	    };
+	    Ok(())
+	}
+}
+
+pub fn get_uart() -> Uart {
+	Uart { address: 0x1000_0000 as _ }
+}
+
+#[macro_export]
+macro_rules! print
+{
+    ($($args:tt)+) => (#[allow(unused_unsafe)] {
+            // Lock the output to prevent lines mixing between each other
+            use core::fmt::Write;
+            //let l = crate::std_macros::OUTPUT_LOCK.lock();
+            let _ = write!(crate::debug::get_uart(), $($args)+);
+            });
+}
+
+
+#[macro_export]
+macro_rules! println
+{
+    () => ({
+           print!("\r\n")
+           });
+    ($fmt:expr) => ({
+            print!(concat!($fmt, "\r\n"))
+            });
+    ($fmt:expr, $($args:tt)+) => ({
+            print!(concat!($fmt, "\r\n"), $($args)+)
+            });
+}

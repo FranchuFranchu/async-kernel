@@ -15,7 +15,7 @@ pub fn init_from_pointers(start: *const (), end: *const ()) {
     heap_size /= slab_allocator_rs::MIN_HEAP_SIZE;
     heap_size *= slab_allocator_rs::MIN_HEAP_SIZE;
 
-    init_heap(heap_start, heap_size)
+    init_heap(heap_start, heap_size);
 }
 
 

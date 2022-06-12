@@ -1,9 +1,6 @@
 [build]
 target = "riscv64gc-unknown-none-elf"
-rustflags = ['-Clink-arg=-Tsrc/kernel_main/src/ld/virt.ld', '-Cforce-unwind-tables=yes']
-
-[target.riscv32imac-unknown-none-elf]
-runner = ["./run.sh", "32", "riscv32imac"]
-
-[target.riscv64gc-unknown-none-elf]
-runner = ["./run.sh", "64", "riscv64gc"]
+rustflags = [
+	"-C", "link-args=-T../linker_scripts/kernel_main.ld", 
+	"-C", "link-args=-L../linker_scripts/"
+]

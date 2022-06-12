@@ -92,8 +92,6 @@
 	# the last one loaded t6 back to its original value.
 .endm
 
-.section .text
-
 .global s_trap_vector
 # This must be aligned by 4 since the last two bits
 # of the mtvec register do not contribute to the address

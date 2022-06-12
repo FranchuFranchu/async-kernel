@@ -1,0 +1,3 @@
+[build]
+target = "riscv64gc-unknown-none-elf"
+rustflags = ["-C", "link-args=-T../linker_scripts/kernel_bootloader.ld", "-C", "link-args=-L../linker_scripts/"]
