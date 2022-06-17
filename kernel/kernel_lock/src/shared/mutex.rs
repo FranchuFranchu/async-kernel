@@ -12,12 +12,12 @@ pub struct RawSharedLock {
 
 // 2. Implement RawMutex for this type
 unsafe impl RawMutex for RawSharedLock {
+    // A spinlock guard can be sent to another thread and unlocked there
+    type GuardMarker = GuardNoSend;
+
     const INIT: RawSharedLock = RawSharedLock {
         internal: RawSpinlock::INIT,
     };
-
-    // A spinlock guard can be sent to another thread and unlocked there
-    type GuardMarker = GuardNoSend;
 
     fn lock(&self) {
         lock_and_disable_interrupts();

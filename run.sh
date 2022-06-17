@@ -10,7 +10,7 @@ export BITS=$1
 
 
 if [ "$GDB" == "yes" ]; then
-	lxterminal -e 'riscv'$BITS'-elf-gdb 'kernel/target/$ARCH/debug/kernel_pre_main'\
+	lxterminal -e 'riscv'$BITS'-elf-gdb 'kernel/target/$ARCH/debug/kernel_main'\
 	-ex "target remote tcp4:0:1234"\
 	-ex "alias print_hartids = p [\$mhartid, kernel_main::cpu::load_hartid()]"\
 	-ex "alias phids = print_hartids"\

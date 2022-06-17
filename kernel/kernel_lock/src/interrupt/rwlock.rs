@@ -8,11 +8,11 @@ pub struct RawInterruptRwLock {
 }
 
 unsafe impl RawRwLock for RawInterruptRwLock {
+    type GuardMarker = GuardSend;
+
     const INIT: RawInterruptRwLock = Self {
         internal: RawSpinRwLock::INIT,
     };
-
-    type GuardMarker = GuardSend;
 
     fn lock_shared(&self) {
         assert!(in_interrupt_context());

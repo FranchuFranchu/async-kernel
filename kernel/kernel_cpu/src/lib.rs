@@ -55,7 +55,8 @@ pub unsafe fn write_sie(value: usize) {
 }
 
 /// # Safety
-/// When setting interrupts, the proper context needs to be created for the trap handler
+/// When setting interrupts, the proper context needs to be created for the trap
+/// handler
 #[inline(always)]
 pub unsafe fn write_sip(value: usize) {
     asm!("csrw sip, {0}" , in(reg) ( value) )
@@ -69,7 +70,8 @@ pub unsafe fn write_stvec(value: usize) {
 }
 
 /// # Safety
-/// Must uphold SATP assumptions in the rest of the kernel. Mainly, that it's a valid page table
+/// Must uphold SATP assumptions in the rest of the kernel. Mainly, that it's a
+/// valid page table
 #[inline(always)]
 pub unsafe fn write_satp(value: usize) {
     asm!("
@@ -85,9 +87,10 @@ pub unsafe fn write_sstatus(value: usize) {
     asm!("csrw sstatus, {0}" , in(reg) ( value) )
 }
 
-/// This is unsafe because other parts of the kernel rely on sscratch being a valid pointer
-/// # Safety
-/// Must be a valid trap frame and must make sense with what the hart is executing
+/// This is unsafe because other parts of the kernel rely on sscratch being a
+/// valid pointer # Safety
+/// Must be a valid trap frame and must make sense with what the hart is
+/// executing
 #[inline(always)]
 pub unsafe fn write_sscratch(value: usize) {
     asm!("csrw sscratch, {0}" , in(reg) ( value) )
@@ -173,6 +176,12 @@ pub fn read_cycle() -> usize {
     value
 }
 
+#[inline(always)]
+pub fn read_instret() -> usize {
+    let value: usize;
+    unsafe { asm!("csrr {0}, instret", out(reg)(value),) };
+    value
+}
 /// Gets hartid from sscratch
 /// This assumes that sscratch holds a valid value
 pub fn load_hartid() -> usize {
@@ -197,13 +206,6 @@ pub fn wfi() {
 #[inline(always)]
 pub fn fence_vma() {
     unsafe { asm!("sfence.vma zero, zero") };
-}
-
-/// This is provided by the CLINT
-pub const MMIO_MTIME: *const u64 = 0x0200_BFF8 as *const u64;
-
-pub fn get_time() -> u64 {
-    unsafe { *MMIO_MTIME }
 }
 
 #[inline]
@@ -242,8 +244,9 @@ pub fn get_xcause_explanation(cause: usize) -> &'static str {
 // This module describes CSR bits and layouts
 pub mod csr {
     // First are the xip and xep CSRs
-    // In the first characture, U means user, S means supervisor, and M means machine
-    // In the second one, S means software, T means timer, and E means external
+    // In the first characture, U means user, S means supervisor, and M means
+    // machine In the second one, S means software, T means timer, and E means
+    // external
 
     // For the xip CSRS (interrupt pending)
     // Software
@@ -284,7 +287,7 @@ pub mod csr {
         pub const SPIE: usize = 1 << 5;
         pub const MPIE: usize = 1 << 7;
     }
-    /// XCAUSE 
+    /// XCAUSE
     pub mod cause {
         pub const SUPERVISOR_SOFTWARE: usize = 1;
         pub const VIRTUAL_SUPERVISOR_SOFTWARE: usize = 2;
@@ -295,7 +298,7 @@ pub mod csr {
         pub const SUPERVISOR_EXTERNAL: usize = 9;
         pub const VIRTUAL_SUPERVISOR_EXTERNAL: usize = 10;
         pub const MACHINE_EXTERNAL: usize = 11;
-        pub const SUPERVISOR_GUEST_EXTERNAL: usize = 12;   
+        pub const SUPERVISOR_GUEST_EXTERNAL: usize = 12;
     }
 
     // SATP flags
@@ -305,7 +308,7 @@ pub mod csr {
     pub const SATP_SV39: usize = 8 << 60;
     #[cfg(target_arch = "riscv64")]
     pub const SATP_SV48: usize = 9 << 60;
-    
+
     pub const XCAUSE_DESCRIPTION: [&'static str; 16] = [
         "Instruction address misaligned",
         "Instruction access fault",

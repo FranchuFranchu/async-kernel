@@ -14,6 +14,9 @@ pub struct RawSpinlock {
 
 // 2. Implement RawMutex for this type
 unsafe impl RawMutex for RawSpinlock {
+    // A spinlock guard can be sent to another thread and unlocked there
+    type GuardMarker = GuardSend;
+
     #[cfg(not(debug_assertions))]
     const INIT: RawSpinlock = RawSpinlock {
         locked: AtomicBool::new(false),
@@ -24,19 +27,19 @@ unsafe impl RawMutex for RawSpinlock {
         locker_hartid: AtomicUsize::new(NO_HART),
     };
 
-    // A spinlock guard can be sent to another thread and unlocked there
-    type GuardMarker = GuardSend;
-
     fn lock(&self) {
-        // Can fail to lock even if the spinlock is not locked. May be more efficient than `try_lock`
-        // when called in a loop.
+        // Can fail to lock even if the spinlock is not locked. May be more efficient
+        // than `try_lock` when called in a loop.
 
         #[cfg(debug_assertions)]
         if self.locked.load(Ordering::Acquire)
             && self.locker_hartid.load(Ordering::Acquire) == load_hartid()
         {
             // TODO warn about this somehow
-            // warn!("Hart number {} tried locking the same lock twice! (Maybe you're holding a lock a function you're calling needs, or you're waking up a future which uses a lock you're holding)", self.locker_hartid.load(Ordering::Relaxed));
+            // warn!("Hart number {} tried locking the same lock twice! (Maybe
+            // you're holding a lock a function you're calling needs, or you're
+            // waking up a future which uses a lock you're holding)",
+            // self.locker_hartid.load(Ordering::Relaxed));
         }
         while !self.try_lock() {
             core::hint::spin_loop()
@@ -45,8 +48,9 @@ unsafe impl RawMutex for RawSpinlock {
     }
 
     fn try_lock(&self) -> bool {
-        // If self.locked is false, then set it to true and return Ok which gets turned to true in the return value
-        // If self.locked is true, then return Err which gets turned to false in the return value
+        // If self.locked is false, then set it to true and return Ok which gets turned
+        // to true in the return value If self.locked is true, then return Err
+        // which gets turned to false in the return value
         self.locked
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()

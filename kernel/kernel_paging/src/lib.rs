@@ -1,28 +1,33 @@
 #![cfg_attr(not(test), no_std)]
 #![feature(int_roundings, generic_const_exprs, int_log)]
 
-pub mod gpaging;
+mod paging;
+pub use paging::*;
 
 // Abstractions over supervisor-mode paging
 extern crate alloc;
 #[cfg(test)]
-#[macro_use] 
+#[macro_use]
 extern crate std;
 
 #[cfg(not(test))]
-#[macro_use] 
+#[macro_use]
 pub mod debug;
 use core::{
     fmt::Debug,
     ops::{Index, IndexMut},
 };
 
-
 pub mod EntryBits {
-    // The V bit indicates whether the PTE is valid; if it is 0, all other bits in the PTE are don’t-cares and may be used freely by software.
+    // The V bit indicates whether the PTE is valid; if it is 0, all other bits in
+    // the PTE are don’t-cares and may be used freely by software.
     pub const VALID: usize = 1 << 0;
-    // The permission bits, R, W, and X, indicate whether the page is readable, writable, and executable, respectively.When all three are zero, the PTE is a pointer to the next level of the page table; otherwise, it isa leaf PTE. Writable pages must also be marked readable; the contrary combinations are reservedfor future use.  Table 4.4 summarizes the encoding of the permission bits.
-    // XWR Meaning
+    // The permission bits, R, W, and X, indicate whether the page is readable,
+    // writable, and executable, respectively.When all three are zero, the PTE is a
+    // pointer to the next level of the page table; otherwise, it isa leaf PTE.
+    // Writable pages must also be marked readable; the contrary combinations are
+    // reservedfor future use.  Table 4.4 summarizes the encoding of the permission
+    // bits. XWR Meaning
     // 000 Pointer to next level of page table
     // 001 Read-only page
     // 010 Reserved for future use
@@ -34,11 +39,23 @@ pub mod EntryBits {
     pub const READ: usize = 1 << 1;
     pub const WRITE: usize = 1 << 2;
     pub const EXECUTE: usize = 1 << 3;
-    // The U bit indicates whether the page is accessible to user mode.  U-mode software may only accessthe page when U=1.  If the SUM bit in thesstatusregister is set, supervisor mode software mayalso access pages with U=1.
+    // The U bit indicates whether the page is accessible to user mode.  U-mode
+    // software may only accessthe page when U=1.  If the SUM bit in
+    // thesstatusregister is set, supervisor mode software mayalso access pages with
+    // U=1.
     pub const USER: usize = 1 << 4;
-    // The G bit designates a global mapping.  Global mappings are those that exist in all address spaces.For non-leaf PTEs, the global setting implies that all mappings in the subsequent levels of the pagetable are global.  Note that failing to mark a global mapping as global merely reduces performance,whereas  marking  a  non-global  mapping  as  global  is  a  software  bug  that,  after  switching  to  anaddress space with a different non-global mapping for that address range, can unpredictably resultin either mapping being used.
+    // The G bit designates a global mapping.  Global mappings are those that exist
+    // in all address spaces.For non-leaf PTEs, the global setting implies that all
+    // mappings in the subsequent levels of the pagetable are global.  Note that
+    // failing to mark a global mapping as global merely reduces performance,whereas
+    // marking  a  non-global  mapping  as  global  is  a  software  bug  that,
+    // after  switching  to  anaddress space with a different non-global mapping for
+    // that address range, can unpredictably resultin either mapping being used.
     pub const GLOBAL: usize = 1 << 5;
-    // Each leaf PTE contains an accessed (A) and dirty (D) bit.  The A bit indicates the virtual page hasbeen read, written, or fetched from since the last time the A bit was cleared.  The D bit indicatesthe virtual page has been written since the last time the D bit was cleared.
+    // Each leaf PTE contains an accessed (A) and dirty (D) bit.  The A bit
+    // indicates the virtual page hasbeen read, written, or fetched from since the
+    // last time the A bit was cleared.  The D bit indicatesthe virtual page has
+    // been written since the last time the D bit was cleared.
     pub const ACCESSED: usize = 1 << 6;
     pub const DIRTY: usize = 1 << 7;
 
@@ -55,11 +72,10 @@ pub enum PageLookupError {
     AccessFault,
     /// bits 54 or more are set
     ReservedBitSet,
-    /// if pte.v = 0, 
+    /// if pte.v = 0,
     Invalid,
     /// if pte.r = 0 and pte.w = 1,
     WriteOnly,
-    
 }
 
 #[derive(Default, Copy, Clone)]
@@ -76,40 +92,46 @@ impl Entry {
 impl Entry {
     /// # Safety
     /// The entry's value must be a valid physical address pointer
-    pub unsafe fn as_table_mut<const PTESIZE: usize>(&mut self) -> &mut Table<PTESIZE> 
-    where [(); 4096 / PTESIZE]: Sized{
+    pub unsafe fn as_table_mut<const PTESIZE: usize>(&mut self) -> &mut Table<PTESIZE>
+    where
+        [(); 4096 / PTESIZE]: Sized,
+    {
         assert!(self.value & 1 != 0);
-        (self.address() as *mut Table<PTESIZE>)
-            .as_mut()
-            .unwrap()
-    }
-    /// # Safety
-    /// The entry's value must be a valid physical address pointer
-    pub unsafe fn as_table<const PTESIZE: usize>(&self) -> &Table<PTESIZE> 
-    where [(); 4096 / PTESIZE]: Sized{
-        assert!(self.value & 1 != 0);
-        (self.address() as *mut Table<PTESIZE>)
-            .as_ref()
-            .unwrap()
+        (self.address() as *mut Table<PTESIZE>).as_mut().unwrap()
     }
 
-    pub unsafe fn try_as_table_mut<const PTESIZE: usize>(&mut self) -> Option<&mut Table<PTESIZE>> 
-    where [(); 4096 / PTESIZE]: Sized{
+    /// # Safety
+    /// The entry's value must be a valid physical address pointer
+    pub unsafe fn as_table<const PTESIZE: usize>(&self) -> &Table<PTESIZE>
+    where
+        [(); 4096 / PTESIZE]: Sized,
+    {
+        assert!(self.value & 1 != 0);
+        (self.address() as *mut Table<PTESIZE>).as_ref().unwrap()
+    }
+
+    pub unsafe fn try_as_table_mut<const PTESIZE: usize>(&mut self) -> Option<&mut Table<PTESIZE>>
+    where
+        [(); 4096 / PTESIZE]: Sized,
+    {
         if self.is_leaf() {
             None
         } else {
             Some(self.as_table_mut())
         }
     }
-    pub unsafe fn try_as_table<const PTESIZE: usize>(&self) -> Option<&Table<PTESIZE>> 
-    where [(); 4096 / PTESIZE]: Sized {
+
+    pub unsafe fn try_as_table<const PTESIZE: usize>(&self) -> Option<&Table<PTESIZE>>
+    where
+        [(); 4096 / PTESIZE]: Sized,
+    {
         if self.is_leaf() {
             None
         } else {
             Some(self.as_table())
         }
     }
-    
+
     pub fn ppn_index(&self, index: u8) -> u8 {
         ((self.value >> 10) >> index * 8) as u8 & u8::MAX
     }
@@ -119,12 +141,16 @@ impl Entry {
             || (self.value & EntryBits::VALID == 0)
             || (self.value & EntryBits::ADDRESS_MASK) == 0
     }
-    /// This takes a leaf entry and turns it into a reference to a page table with the same effect.
-    /// Increment should be one of the PAGE_SIZE, MEGAPAGE_SIZE, GIGAPAGE_SIZE, etc constants
-    /// If this entry is a megapage, for example, the increment should be PAGE_SIZE
 
-    pub unsafe fn split<const PTESIZE: usize>(&mut self, increment: usize)  
-    where [(); 4096 / PTESIZE]: Sized {
+    /// This takes a leaf entry and turns it into a reference to a page table
+    /// with the same effect. Increment should be one of the PAGE_SIZE,
+    /// MEGAPAGE_SIZE, GIGAPAGE_SIZE, etc constants If this entry is a
+    /// megapage, for example, the increment should be PAGE_SIZE
+
+    pub unsafe fn split<const PTESIZE: usize>(&mut self, increment: usize)
+    where
+        [(); 4096 / PTESIZE]: Sized,
+    {
         let mut table = Box::new(Table::<PTESIZE>::zeroed());
         let mut current_address = self.value & EntryBits::ADDRESS_MASK;
 
@@ -141,7 +167,7 @@ impl Entry {
         debug_assert!(self.value & 1 != 0);
         debug_assert!(self.value & EntryBits::RWX == 0);
     }
-    
+
     pub fn address(&self) -> usize {
         (self.value & EntryBits::ADDRESS_MASK) << 2
     }
@@ -184,14 +210,17 @@ impl Debug for Entry {
 #[repr(C)]
 #[repr(align(4096))]
 #[derive(Debug)]
-pub struct Table<const PTESIZE: usize> 
-    where [(); 4096 / PTESIZE]: Sized
-    {
+pub struct Table<const PTESIZE: usize>
+where
+    [(); 4096 / PTESIZE]: Sized,
+{
     pub entries: [Entry; 4096 / PTESIZE],
 }
 
 impl<const PTESIZE: usize> Table<PTESIZE>
-    where [(); 4096 / PTESIZE]: Sized {
+where
+    [(); 4096 / PTESIZE]: Sized,
+{
     pub const fn zeroed() -> Self {
         Table {
             entries: [Entry { value: 0 }; 4096 / PTESIZE],
@@ -200,59 +229,26 @@ impl<const PTESIZE: usize> Table<PTESIZE>
 }
 
 impl<const PTESIZE: usize> Index<usize> for Table<PTESIZE>
-    where [(); 4096 / PTESIZE]: Sized {
+where
+    [(); 4096 / PTESIZE]: Sized,
+{
     type Output = Entry;
+
     fn index(&self, idx: usize) -> &Entry {
         &self.entries[idx]
     }
 }
 
 impl<const PTESIZE: usize> IndexMut<usize> for Table<PTESIZE>
-    where [(); 4096 / PTESIZE]: Sized {
+where
+    [(); 4096 / PTESIZE]: Sized,
+{
     fn index_mut(&mut self, idx: usize) -> &mut Entry {
         &mut self.entries[idx]
     }
 }
 
-pub trait Paging {
-    fn map(&mut self, physical_addr: usize, virtual_addr: usize, length: usize, flags: usize);
-    unsafe fn query(&self, virtual_addr: usize) -> Result<(Entry, usize), PageLookupError>;
-    unsafe fn query_physical_address(&self, virtual_addr: usize) -> Result<usize, PageLookupError> {
-        self.query(virtual_addr).map(|(entry, offset)| entry.address() + offset)
-    }
-    fn identity_map(&mut self);
-}
-
-pub unsafe fn enable(_root_table_physical: usize) {}
-
-use core::ffi::c_void;
-
-extern "C" {
-    static critical_code_start: c_void;
-    static critical_code_end: c_void;
-}
-
-/// Map the trap and switch to user/supervisor frame functions, which are the ones that change SATP to change contexts
-pub fn map_critical_kernel_address_space(table: &mut impl Paging, trap_frame: usize) {
-    let start = unsafe { &critical_code_start as *const c_void as usize }.div_floor(4096) * 4096;
-
-    let end = unsafe { &critical_code_end as *const c_void as usize }.div_ceil(4096) * 4096;
-    table.map(
-        start,
-        start,
-        end - start,
-        EntryBits::VALID | EntryBits::READ | EntryBits::EXECUTE,
-    );
-    table.map(
-        trap_frame,
-        trap_frame,
-        4096,
-        EntryBits::VALID | EntryBits::READ | EntryBits::WRITE,
-    );
-}
-
 use alloc::boxed::Box;
-
 
 pub const ENTRY_COUNT: usize = 512;
 pub const PAGE_ALIGN: usize = 4096;

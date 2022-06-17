@@ -8,13 +8,11 @@ use alloc::{
 };
 use core::{any::Any, mem::MaybeUninit};
 
+use cstr_core::CStr;
 use kernel_lock::shared::RwLock;
 use kernel_printer::println;
-
 use log::warn;
-use cstr_core::CStr;
 use num_enum::{FromPrimitive, IntoPrimitive};
-
 
 static mut DEVICE_TREE_BASE: *const FdtHeader = core::ptr::null();
 static mut DEVICE_TREE_ROOT: MaybeUninit<RwLock<Node>> = MaybeUninit::uninit();
@@ -26,8 +24,9 @@ pub struct Node {
     pub children: BTreeMap<&'static str, BTreeMap<Option<usize>, Node>>,
     pub properties: BTreeMap<&'static str, PropertyValue<'static>>,
 
-    /// This holds an arbitrary datatype which is the representation of this type in the kernel
-    /// This can (and is) used to own objects with functions that are called on interrupts
+    /// This holds an arbitrary datatype which is the representation of this
+    /// type in the kernel This can (and is) used to own objects with
+    /// functions that are called on interrupts
     pub kernel_struct: RwLock<Option<alloc::boxed::Box<dyn Any + Send>>>,
 }
 impl Node {
@@ -43,6 +42,7 @@ impl Node {
             kernel_struct: RwLock::new(None),
         }
     }
+
     pub fn get<'this>(&'this self, path: &'this str) -> Option<&'this Node> {
         let mut path_iter = path.splitn(2, '/');
         let first_component = path_iter.next().unwrap_or(path);
@@ -54,7 +54,8 @@ impl Node {
             // Full unit address
             let (name, address) = first_component.split_once('@').unwrap();
             if address.is_empty() {
-                // A component ending with an @ allows any unit address (choose the first one then)
+                // A component ending with an @ allows any unit address (choose the first one
+                // then)
                 child = self.children.get(name)?.values().next()?
             } else {
                 child = self
@@ -73,9 +74,11 @@ impl Node {
             Some(child)
         }
     }
+
     pub fn children_names(&self) -> VecDeque<&'static str> {
         self.children.values().flatten().map(|s| s.1.name).collect()
     }
+
     pub fn children_names_address(&self) -> VecDeque<String> {
         self.children
             .values()
@@ -89,12 +92,15 @@ impl Node {
             })
             .collect()
     }
+
     pub fn children(&self) -> VecDeque<&Node> {
         self.children.values().flatten().map(|s| s.1).collect()
     }
+
     pub fn children_mut(&mut self) -> VecDeque<&mut Node> {
         self.children.values_mut().flatten().map(|s| s.1).collect()
     }
+
     fn insert_child(&mut self, other: Self) {
         // Check if there's already a map for this name
         match self.children.get_mut(other.name) {
@@ -109,6 +115,7 @@ impl Node {
             }
         }
     }
+
     pub fn pretty(&self, indent: usize) {
         match self.unit_address {
             Some(e) => println!("{}{}@{:x} {{", "    ".repeat(indent), self.name, e),
@@ -123,6 +130,7 @@ impl Node {
         }
         println!("{}}}", "    ".repeat(indent));
     }
+
     pub fn walk<F: FnMut(&'static Node)>(&'static self, closure: &mut F) {
         closure(self);
         for i in self.children() {
@@ -137,8 +145,9 @@ impl Node {
         }
     }
 
-    /// The lifetimes for this function aren't <'static> because that would be an aliasing rule violation
-    /// (closure mutably borrows Node forever so no one else can mut borrow it again )
+    /// The lifetimes for this function aren't <'static> because that would be
+    /// an aliasing rule violation (closure mutably borrows Node forever so
+    /// no one else can mut borrow it again )
     pub fn walk_mut<F: FnMut(&mut Node)>(&mut self, closure: &mut F) {
         closure(self);
         for i in self.children_mut() {
@@ -218,6 +227,7 @@ impl<'data> PropertyValue<'data> {
         };
         PropertyValue::PropSpecific(value)
     }
+
     fn as_str(&self) -> String {
         match self {
             Self::Empty => "true".to_string(),
@@ -360,7 +370,8 @@ pub fn root() -> &'static RwLock<Node> {
     unsafe { DEVICE_TREE_ROOT.assume_init_ref() }
 }
 
-/// Replace PHandleRaw attributes with PHandle attributes and put references to the nodes inside of them
+/// Replace PHandleRaw attributes with PHandle attributes and put references to
+/// the nodes inside of them
 pub fn link_phandles() {
     // Construct a phandle map
     let mut phandles: BTreeMap<u32, &'static Node> = BTreeMap::new();

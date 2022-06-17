@@ -6,5 +6,6 @@ members = [
 	"kernel_executor",
 	"kernel_sbi",
 	"kernel_paging",
-	"kernel_printer"
+	"kernel_printer",
+	"kernel_send_generic",
 ]

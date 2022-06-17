@@ -1,10 +1,10 @@
 // 0BSD
 
 // An interrupt controller controls external interrupts
-// A "riscv,plic0"-compatible interrupt controller has many different "hart contexts" (or "targets")
-// Each hart can have specific external interrupts enabled or disabled for it
-// The context number also depends on whether it's S-mode or M-mode
-// See https://static.dev.sifive.com/SiFive-U5-Coreplex-v1.0.pdf, section 4.1
+// A "riscv,plic0"-compatible interrupt controller has many different "hart
+// contexts" (or "targets") Each hart can have specific external interrupts
+// enabled or disabled for it The context number also depends on whether it's
+// S-mode or M-mode See https://static.dev.sifive.com/SiFive-U5-Coreplex-v1.0.pdf, section 4.1
 
 use kernel_cpu::load_hartid;
 
@@ -57,8 +57,6 @@ impl Plic0 {
     }
 
     /// Sets the priority of a specific interrupt number.
-    ///
-    /// 
     pub fn set_priority(&self, interrupt: u32, priority: u32) {
         unsafe {
             (self.base_addr as *mut u32)
@@ -66,6 +64,7 @@ impl Plic0 {
                 .write_volatile(priority)
         };
     }
+
     pub fn set_enabled(&self, interrupt: u32, enable: bool) {
         // The enable bits are at offset 0x2000 + context * 0x80
 
@@ -97,18 +96,21 @@ impl Plic0 {
             };
         }
     }
+
     pub fn set_threshold(&self, threshold: u32) {
         let threshold_base = self.base_addr + 0x20_0000;
         let target_base = threshold_base + self.context_number * 0x1000;
         let target_base = target_base as *mut u32;
         unsafe { target_base.write_volatile(threshold) };
     }
+
     pub fn claim_highest_priority(&self) -> u32 {
         let cc_base = self.base_addr + 0x20_0004;
         let target_base = cc_base + self.context_number * 0x1000;
         let target_base = target_base as *mut u32;
         unsafe { target_base.read_volatile() }
     }
+
     pub fn complete(&self, interrupt: u32) {
         let cc_base = self.base_addr + 0x20_0004;
         let target_base = cc_base + self.context_number * 0x1000;

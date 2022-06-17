@@ -1,14 +1,30 @@
 #![no_std]
 
+use core::alloc::GlobalAlloc;
+
 use slab_allocator_rs::LockedHeap;
 
+extern crate kernel_util;
+
 #[global_allocator]
-static ALLOCATOR: LockedHeap = LockedHeap::empty();
+static ALLOCATOR: ProxyAllocator = ProxyAllocator(LockedHeap::empty());
+
+struct ProxyAllocator(LockedHeap);
+
+unsafe impl GlobalAlloc for ProxyAllocator {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        self.0.alloc(layout)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+        self.0.dealloc(ptr, layout)
+    }
+}
 
 pub fn init_from_pointers(start: *const (), end: *const ()) {
     // Initialize memory allocation
-    let heap_end = unsafe { end as usize };
-    let heap_start = unsafe { start as usize };
+    let heap_end = end as usize;
+    let heap_start = start as usize;
     let mut heap_size: usize = heap_end - heap_start;
 
     // Align the size to min heap size boundaries
@@ -18,9 +34,8 @@ pub fn init_from_pointers(start: *const (), end: *const ()) {
     init_heap(heap_start, heap_size);
 }
 
-
 pub fn init_heap(heap_start: usize, heap_size: usize) {
     unsafe {
-        ALLOCATOR.init(heap_start, heap_size);
+        ALLOCATOR.0.init(heap_start, heap_size);
     }
 }

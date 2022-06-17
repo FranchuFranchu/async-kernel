@@ -10,11 +10,11 @@ pub struct RawSpinRwLock {
 }
 
 unsafe impl RawRwLock for RawSpinRwLock {
+    type GuardMarker = GuardSend;
+
     const INIT: RawSpinRwLock = Self {
         value: AtomicUsize::new(0),
     };
-
-    type GuardMarker = GuardSend;
 
     fn lock_shared(&self) {
         while !self.try_lock_shared() {}

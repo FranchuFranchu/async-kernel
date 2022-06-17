@@ -1,9 +1,13 @@
-//! A waker that can be used when you're certain that the future will never be Ready
-
-use core::{task::{RawWaker, RawWakerVTable, Waker, Context}, future::Future, pin::Pin, sync::atomic::Ordering};
-use core::sync::atomic::AtomicBool;
+//! A waker that can be used when you're certain that the future will never be
+//! Ready
 
 use alloc::boxed::Box;
+use core::{
+    future::Future,
+    pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
+    task::{Context, RawWaker, RawWakerVTable, Waker},
+};
 
 struct WakerData(AtomicBool);
 
@@ -11,13 +15,18 @@ unsafe fn waker_clone(a: *const ()) -> RawWaker {
     RawWaker::new(a, &WAKER_VTABLE)
 }
 unsafe fn wake(a: *const ()) {
-    (a as *const AtomicBool).as_ref().unwrap().store(true, Ordering::Release);
+    (a as *const AtomicBool)
+        .as_ref()
+        .unwrap()
+        .store(true, Ordering::Release);
 }
 unsafe fn wake_by_ref(a: *const ()) {
-    (a as *const AtomicBool).as_ref().unwrap().store(true, Ordering::Release);
+    (a as *const AtomicBool)
+        .as_ref()
+        .unwrap()
+        .store(true, Ordering::Release);
 }
-unsafe fn drop(a: *const ()) {
-}
+unsafe fn drop(a: *const ()) {}
 
 const fn waker_vtable_null() -> RawWakerVTable {
     RawWakerVTable::new(waker_clone, wake, wake_by_ref, drop)
@@ -30,8 +39,8 @@ const fn new_raw_waker(data: *const ()) -> RawWaker {
 }
 
 /// # SAFETY
-/// Callers must ensure flag lives longer than the return value and all of its clones
+/// Callers must ensure flag lives longer than the return value and all of its
+/// clones
 pub unsafe fn new_waker(flag: &AtomicBool) -> Waker {
     Waker::from_raw(new_raw_waker(flag as *const _ as *const ()))
 }
-

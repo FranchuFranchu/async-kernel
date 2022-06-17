@@ -24,7 +24,7 @@ macro_rules! print
             // Lock the output to prevent lines mixing between each other
             use core::fmt::Write;
             //let l = crate::std_macros::OUTPUT_LOCK.lock();
-            let _ = write!(crate::debug::get_uart(), $($args)+);
+            let _ = write!(::kernel_util::debug::get_uart(), $($args)+);
             });
 }
 
@@ -32,12 +32,12 @@ macro_rules! print
 macro_rules! println
 {
     () => ({
-           print!("\r\n")
+           ::kernel_util::print!("\r\n")
            });
     ($fmt:expr) => ({
-            print!(concat!($fmt, "\r\n"))
+            ::kernel_util::print!(concat!($fmt, "\r\n"))
             });
     ($fmt:expr, $($args:tt)+) => ({
-            print!(concat!($fmt, "\r\n"), $($args)+)
+            ::kernel_util::print!(concat!($fmt, "\r\n"), $($args)+)
             });
 }

@@ -1,5 +1,6 @@
 #![no_std]
-//! Abstractions over the RISC-V Supervisor Binary Interface to communicate with M-mode code
+//! Abstractions over the RISC-V Supervisor Binary Interface to communicate with
+//! M-mode code
 // See https://github.com/riscv/riscv-sbi-doc/blob/master/riscv-sbi.adoc
 use core::arch::asm;
 
@@ -131,14 +132,15 @@ pub unsafe fn call_sbi_3(
 }
 
 pub fn set_absolute_timer(time: u64) -> Result<(), SBIError> {
-    // SAFETY: Assuming the SBI implementation is correct, setting a timer shouldn't cause anything bad in memory
-    // Note that this SBI call's return value is meaningless, so we erase it
-    // TODO: Use RV32 SBI for u64's here
+    // SAFETY: Assuming the SBI implementation is correct, setting a timer shouldn't
+    // cause anything bad in memory Note that this SBI call's return value is
+    // meaningless, so we erase it TODO: Use RV32 SBI for u64's here
     unsafe { call_sbi_1(0x54494D45, 0, time as usize).map(|_| {}) }
 }
 
 pub fn shutdown(reason: usize) {
-    // SAFETY: Shutting down is safe, because the whole machine state gets erased. But destructors don't get called
+    // SAFETY: Shutting down is safe, because the whole machine state gets erased.
+    // But destructors don't get called
     unsafe {
         // See https://github.com/riscv/riscv-sbi-doc/blob/master/riscv-sbi.adoc#system-reset-extension-eid-0x53525354-srst
         call_sbi_2(0x53525354, 0, 0, reason);

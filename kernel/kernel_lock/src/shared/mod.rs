@@ -5,16 +5,17 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use kernel_cpu::{in_interrupt_context, load_hartid};
+use lock_api::RawRwLock as RawRwLockTrait;
 pub use mutex::{Mutex, MutexGuard, RawSharedLock as RawMutex};
 pub use rwlock::{RawSharedRwLock as RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use super::spin::RwLock as SpinRwLock;
-use super::spin::RawRwLock as RawSpinRwLock;
-use lock_api::RawRwLock as RawRwLockTrait;
+use super::spin::{RawRwLock as RawSpinRwLock, RwLock as SpinRwLock};
 
-static HART_LOCK_COUNT: SpinRwLock<Vec<AtomicUsize>> = SpinRwLock::const_new(RawSpinRwLock::INIT, Vec::new());
+static HART_LOCK_COUNT: SpinRwLock<Vec<AtomicUsize>> =
+    SpinRwLock::const_new(RawSpinRwLock::INIT, Vec::new());
 
-// Resizes HART_LOCK_COUNT up to idx + 1, but does not exclusively lock if not necessary
+// Resizes HART_LOCK_COUNT up to idx + 1, but does not exclusively lock if not
+// necessary
 pub fn create_hart_lock_count_entry_if_necessary(idx: &usize) -> bool {
     if idx < &HART_LOCK_COUNT.read().len() {
         false

@@ -9,7 +9,7 @@ use core::{
 
 use lock_api::RawMutex;
 
-use crate::{spin::mutex::RawSpinlock, shared::RawMutex as RawSharedMutex};
+use crate::{shared::RawMutex as RawSharedMutex, spin::mutex::RawSpinlock};
 
 pub struct MutexLockFuture<'mutex, T> {
     mutex: &'mutex AsyncMutex<T>,
@@ -36,6 +36,7 @@ impl RawAsyncMutex {
 
 impl<'mutex, T> Future for MutexLockFuture<'mutex, T> {
     type Output = AsyncMutexGuard<'mutex, T>;
+
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.mutex.lock.locked.try_lock() {
             // Lock successful
@@ -56,6 +57,7 @@ impl<T> AsyncMutex<T> {
             lock: RawAsyncMutex::new(),
         }
     }
+
     pub fn lock<'mutex>(&'mutex self) -> MutexLockFuture<'mutex, T> {
         MutexLockFuture { mutex: self }
     }
@@ -73,6 +75,7 @@ pub struct AsyncMutexGuard<'mutex, T> {
 
 impl<'mutex, T> Deref for AsyncMutexGuard<'mutex, T> {
     type Target = T;
+
     fn deref(&self) -> &'mutex T {
         unsafe { &*self.mutex.value.get() }
     }
@@ -95,4 +98,3 @@ unsafe impl<T> Sync for AsyncMutex<T> {}
 
 pub type Mutex<T> = AsyncMutex<T>;
 pub type MutexGuard<'mutex, T> = AsyncMutexGuard<'mutex, T>;
-

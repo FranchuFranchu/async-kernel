@@ -15,17 +15,17 @@ pub struct RawInterruptLock {
 
 // 2. Implement RawMutex for this type
 unsafe impl RawMutex for RawInterruptLock {
+    // A spinlock guard can be sent to another thread and unlocked there
+    type GuardMarker = GuardSend;
+
     const INIT: RawInterruptLock = RawInterruptLock {
         internal: RawSpinlock::INIT,
     };
 
-    // A spinlock guard can be sent to another thread and unlocked there
-    type GuardMarker = GuardSend;
-
     fn lock(&self) {
         assert!(in_interrupt_context());
-        // Can fail to lock even if the spinlock is not locked. May be more efficient than `try_lock`
-        // when called in a loop.
+        // Can fail to lock even if the spinlock is not locked. May be more efficient
+        // than `try_lock` when called in a loop.
         self.internal.lock()
     }
 

@@ -1,0 +1,6 @@
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+
+reorder_impl_items = true
+reorder_modules = true
+wrap_comments = true

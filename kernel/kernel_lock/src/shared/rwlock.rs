@@ -9,11 +9,11 @@ pub struct RawSharedRwLock {
 }
 
 unsafe impl RawRwLock for RawSharedRwLock {
+    type GuardMarker = GuardSend;
+
     const INIT: RawSharedRwLock = Self {
         internal: RawSpinRwLock::INIT,
     };
-
-    type GuardMarker = GuardSend;
 
     fn lock_shared(&self) {
         debug!(

@@ -142,6 +142,7 @@ trap_exit:
 	
 
 .global switch_to_supervisor_frame	
+# a0: trap frame
 switch_to_supervisor_frame:
 	// Load the trap frame
 	csrw sscratch, a0
@@ -250,6 +251,31 @@ store_to_trap_frame:
 	
 	csrrw a1, sscratch, a1
 	ret
+	
+.global store_to_trap_frame_and_run_function
+# a0: Trap frame to save state to
+# a1: Function to call
+# a2-a7: Other arguments for the function
+store_to_trap_frame_and_run_function:
+	addi sp, sp, -16
+	sx ra, (sp)
+	.set 	i, 0
+	.rept	32
+		store_general	%i, a0
+		.set	i, i+1
+	.endr
+	
+	# set pc = .before_return
+	la t0, .before_return
+	sx t0, XLEN*32(a0)
+	
+	jalr a1
+	
+.before_return:
+	lx ra, (sp)
+	addi sp, sp, 16
+	ret
+
 
 .global critical_code_end	
 critical_code_end:

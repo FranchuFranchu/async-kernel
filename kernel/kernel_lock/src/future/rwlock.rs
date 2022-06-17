@@ -7,11 +7,9 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
-use lock_api::RawRwLock;
+use lock_api::{RawMutex, RawRwLock};
 
-use crate::spin::rwlock::RawSpinRwLock;
-use lock_api::RawMutex;
-use crate::{shared::RawMutex as RawSharedMutex};
+use crate::{shared::RawMutex as RawSharedMutex, spin::rwlock::RawSpinRwLock};
 
 pub struct RwLockReadFuture<'rwlock, T> {
     rwlock: &'rwlock AsyncRwLock<T>,
@@ -41,6 +39,7 @@ impl RawAsyncRwLock {
 
 impl<'rwlock, T: 'rwlock> Future for RwLockReadFuture<'rwlock, T> {
     type Output = AsyncRwLockReadGuard<'rwlock, T>;
+
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.rwlock.lock.locked.try_lock_shared() {
             // Lock successful
@@ -58,6 +57,7 @@ impl<'rwlock, T: 'rwlock> Future for RwLockReadFuture<'rwlock, T> {
 
 impl<'rwlock, T: 'rwlock> Future for RwLockWriteFuture<'rwlock, T> {
     type Output = AsyncRwLockWriteGuard<'rwlock, T>;
+
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.rwlock.lock.locked.try_lock_exclusive() {
             // Lock successful
@@ -121,6 +121,7 @@ pub struct AsyncRwLockWriteGuard<'rwlock, T> {
 
 impl<'rwlock, T> Deref for AsyncRwLockWriteGuard<'rwlock, T> {
     type Target = T;
+
     fn deref(&self) -> &'rwlock T {
         unsafe { &*self.rwlock.value.get() }
     }
@@ -144,6 +145,7 @@ pub struct AsyncRwLockReadGuard<'rwlock, T> {
 
 impl<'rwlock, T> Deref for AsyncRwLockReadGuard<'rwlock, T> {
     type Target = T;
+
     fn deref(&self) -> &'rwlock T {
         unsafe { &*self.rwlock.value.get() }
     }
