@@ -9,3 +9,4 @@ edition = "2021"
 [dependencies]
 kernel_paging = { path = "../kernel_paging" }
 kernel_allocator = { path = "../kernel_allocator" }
+kernel_cpu = { path = "../kernel_cpu" }

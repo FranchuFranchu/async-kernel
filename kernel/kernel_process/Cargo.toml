@@ -1,12 +1,12 @@
 [package]
-name = "kernel_executor"
+name = "kernel_process"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-kernel_printer = { path = "../kernel_printer" }
+kernel_lock = { path = "../kernel_lock" }
+kernel_cpu = { path = "../kernel_cpu" }
+kernel_trap_frame = { path = "../kernel_trap_frame" }
 kernel_util = { path = "../kernel_util" }
-kernel_send_generic = { path = "../kernel_send_generic" }
-spin = "*"

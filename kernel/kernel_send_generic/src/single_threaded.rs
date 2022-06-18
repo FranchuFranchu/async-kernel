@@ -90,6 +90,7 @@ struct NonAtomic;
 impl ThreadLocality for NonAtomic {
     type Locking<T> = SimpleLockWrapper<ThreadRwLocking<T>>;
     type Refcount<T> = ThreadRefcount<T>;
+    type RefcountWeak<T> = ThreadRefcountWeak<T>;
     type RwLocking<T> = ThreadRwLocking<T>;
 }
 

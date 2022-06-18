@@ -8,4 +8,6 @@ members = [
 	"kernel_paging",
 	"kernel_printer",
 	"kernel_send_generic",
+	"kernel_syscall",
+	"kernel_process"
 ]

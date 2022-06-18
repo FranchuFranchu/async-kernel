@@ -20,24 +20,30 @@ extern crate kernel_allocator;
 extern crate kernel_printer;
 
 use alloc::{boxed::Box, collections::VecDeque, rc::Rc};
-use core::{cell::RefCell, ffi::c_void};
+use core::{
+    cell::RefCell,
+    ffi::c_void,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use kernel_cpu::{
-    csr::status, read_satp, read_sscratch, read_sstatus, write_sie, write_sscratch, write_sstatus,
-    write_stvec,
+    csr::status, read_satp, read_sie, read_sscratch, read_sstatus, write_sie, write_sscratch,
+    write_sstatus, write_stvec,
 };
-use kernel_executor::{Executor, LocalExecutor};
+use kernel_executor::{LocalExecutor, SendExecutor, SendExecutorHandle};
+use kernel_process::Process;
 use kernel_trap_frame::TrapFrame;
+use kernel_util::boxed_slice_with_alignment_uninit;
 use local_notify::Notify;
+use sbi::SbiError;
 
-use crate::process::Process;
+use crate::timer::set_relative_timer;
 
 pub mod asm;
 pub mod local_notify;
 pub mod never_waker;
-pub mod process;
 pub mod std_macros;
-pub mod timer_queue;
+pub mod timer;
 pub mod trap_handler;
 pub mod wait_future;
 
@@ -56,7 +62,7 @@ extern "C" {
 #[derive(Default)]
 struct HartLocals {
     local_executor: Option<kernel_executor::LocalExecutorHandle>,
-    executor: Option<kernel_executor::ExecutorHandle>,
+    executor: Option<kernel_executor::SendExecutorHandle>,
     trap_notify: Notify,
     timer_happened_notify: Notify,
     timer_scheduled_notify: Notify,
@@ -102,86 +108,128 @@ pub fn rust_oom() {
     loop {}
 }
 
+pub async fn setup_hart(hartid: usize) -> ! {
+    setup_hart_state_and_metadata(hartid);
+
+    common_hart_code().await
+}
+
+pub static SV_BITS: AtomicUsize = AtomicUsize::new(0);
+pub static GAP: AtomicUsize = AtomicUsize::new(0);
+
 #[no_mangle]
-pub fn main(hartid: usize, opaque: usize) -> ! {
+pub fn main(
+    hartid: usize,
+    opaque: usize,
+    sv_bits: usize,
+    kernel_len: usize,
+    stack_start: usize,
+    hart_entry_point: usize,
+) -> ! {
+    if SV_BITS.load(Ordering::Acquire) != 0 {
+        // This is not the main hart. Go to the hart entry code
+
+        kernel_executor::run_neverending_future(
+            alloc::boxed::Box::pin(setup_hart(hartid)),
+            kernel_cpu::wfi,
+        )
+    };
     unsafe { (0x1000_0000 as *mut u8).write_volatile(67) };
     unsafe { (0x1000_0000 as *mut u8).write_volatile(0xa) };
+
     let start: usize = 0xffffffc08200_0000;
     let end: usize = 0xffffffc08700_0000;
     kernel_allocator::init_from_pointers(start as *const _, end as *const _);
     println!("{:?}", "Reached kernel!");
+    println!("{:x}", stack_start);
+
+    SV_BITS.store(sv_bits, Ordering::Release);
+    GAP.store(0usize.wrapping_sub(1 << (sv_bits - 1)), Ordering::Release);
+
     kernel_executor::run_neverending_future(
-        alloc::boxed::Box::pin(async_main(hartid, opaque)),
+        alloc::boxed::Box::pin(async_main(hartid, opaque, hart_entry_point)),
         kernel_cpu::wfi,
     )
 }
 
-async fn async_main(hartid: usize, _opaque: usize) -> ! {
-    let executor = Executor::new([]);
+static mut GLOBAL_EXECUTOR: Option<SendExecutorHandle> = None;
+
+fn setup_hart_state_and_metadata(hartid: usize) {
     let local_executor = LocalExecutor::new();
     unsafe {
         write_stvec(s_trap_vector as usize);
         use kernel_cpu::csr::*;
         write_sstatus(read_sstatus() | status::SIE);
 
-        let handle = executor.handle();
+        let handle = GLOBAL_EXECUTOR.as_ref().unwrap().clone();
 
         let mut hart_locals = HartLocals::default();
         hart_locals.executor = Some(handle);
         hart_locals.local_executor = Some(local_executor.borrow_mut().handle());
         let mut frame = setup_hart_trap_frame(hartid, hart_locals);
         frame.pid = 1;
-        frame.interrupt_stack = 0xffffffc08400_0000;
+
+        let stack = boxed_slice_with_alignment_uninit::<u8>(4096, 4096);
+        let stack_addr = stack.as_ptr_range().end as usize;
+        Box::leak(stack);
+
+        frame.interrupt_stack = stack_addr;
         frame.satp = read_satp();
         frame.kernel_satp = read_satp();
 
         write_sscratch(Box::leak(frame) as *mut _ as usize);
-    };
+    }
+}
 
-    HartLocals::current()
-        .local_executor
-        .as_ref()
-        .unwrap()
-        .spawn(Box::new(Box::pin(async {
-            // Wait until the trap handler task is ready.
-            let hart_locals = HartLocals::current();
+async fn async_main(hartid: usize, _opaque: usize, hart_entry_point: usize) -> ! {
+    let executor = SendExecutor::new();
+    unsafe { GLOBAL_EXECUTOR.replace(executor.lock().handle()) };
 
-            hart_locals.trap_notify.rx_ready().await;
+    setup_hart_state_and_metadata(hartid);
 
-            HartLocals::current()
-                .local_executor
-                .as_ref()
-                .unwrap()
-                .spawn(Box::new(Box::pin(
-                    timer_queue::task_schedule_time_interrupts(),
-                )));
-            HartLocals::current()
-                .local_executor
-                .as_ref()
-                .unwrap()
-                .spawn(Box::new(Box::pin(
-                    timer_queue::task_handle_time_interrupts(),
-                )));
-        })));
+    // Spawn all harts
+    for hart_id in 0.. {
+        let stack = boxed_slice_with_alignment_uninit::<u8>(4096, 4096);
+        let stack_addr = stack.as_ptr_range().end as *mut usize;
+        let stack_addr = unsafe { stack_addr.offset(-1) };
+        unsafe { stack_addr.write(read_satp()) };
+        match sbi::hart_state_management::hart_start(
+            hart_id,
+            hart_entry_point,
+            stack_addr as usize - GAP.load(Ordering::Relaxed),
+        ) {
+            Ok(status) => {}
+            Err(SbiError::AlreadyAvailable) => {}
+            Err(SbiError::InvalidParameter) => {
+                break;
+            }
+            _ => {
+                panic!("{:?}", "Unhandled SBI error when starting hart");
+            }
+        };
+        Box::leak(stack);
+    }
 
-    /*
-    fdt::root().read().pretty(0);
-    plic.set_threshold(0);
-      plic.set_enabled(10, true);
-    plic.set_priority(10, 3);
-    unsafe { (0x1000_0001 as *mut u8).write_volatile(1) }
-    */
+    println!("{:?}", "all harts started up!");
+
+    common_hart_code().await
+}
+
+async fn common_hart_code() -> ! {
     HartLocals::current()
         .local_executor
         .as_ref()
         .unwrap()
         .spawn(Box::new(Box::pin(async {
             fn test() {
-                println!("{:?}", "hello world!");
-                use kernel_cpu::{read_sip, write_sip};
-                enable_interrupts();
                 unsafe { write_sstatus(read_sstatus() | status::SIE) };
-                kernel_sbi::set_absolute_timer(0);
+                enable_interrupts();
+
+                for i in 0u64.. {
+                    i * i;
+                }
+
+                use kernel_cpu::{read_sip, write_sip};
                 unsafe { write_sip(read_sip() | kernel_cpu::csr::SSIP) }
                 loop {}
             }
@@ -189,22 +237,25 @@ async fn async_main(hartid: usize, _opaque: usize) -> ! {
                 |mut process| process.name = Some(alloc::string::String::from("hello world")),
                 test,
             );
-            process.lock().switch_to_and_come_back();
-        })));
-    let w = local_executor.borrow_mut().handle();
-    let _a = w.await;
 
-    println!("{:?}", "Idling!");
+            loop {
+                set_relative_timer(0x1_000_000);
+                process.lock().switch_to_and_come_back();
+            }
+        })));
+
+    let handle = HartLocals::current()
+        .local_executor
+        .as_ref()
+        .unwrap()
+        .clone();
+    handle.await;
+
     loop {}
 }
 
 #[no_mangle]
 fn test_fn() {}
-
-#[no_mangle]
-fn hart_entry() {
-    loop {}
-}
 
 #[no_mangle]
 fn syscall_on_interrupt_disabled() {

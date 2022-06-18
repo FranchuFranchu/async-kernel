@@ -1,3 +1,7 @@
+#![no_std]
+
+extern crate alloc;
+
 use alloc::{boxed::Box, string::String, sync::Arc};
 
 use kernel_cpu::{read_satp, read_sscratch, Registers};
@@ -10,11 +14,24 @@ extern "C" {
     fn switch_to_supervisor_frame(a: *mut TrapFrame);
 }
 
+pub enum ProcessState {
+    Running,
+    Paused,
+    Exited,
+}
+
+impl Default for ProcessState {
+    fn default() -> Self {
+        Self::Paused
+    }
+}
+
 #[derive(Default)]
 pub struct Process {
     pub is_supervisor: bool,
     pub trap_frame: Box<TrapFrame>,
     pub name: Option<String>,
+    pub state: ProcessState,
     pub kernel_allocated_stack: Option<Box<[u8]>>,
 }
 
@@ -31,6 +48,7 @@ impl Process {
         my_trap_frame.satp = read_satp();
         my_trap_frame.kernel_satp = read_satp();
 
+        self.state = ProcessState::Running;
         unsafe {
             store_to_trap_frame_and_run_function(
                 &mut *my_trap_frame as *mut _,
@@ -38,6 +56,7 @@ impl Process {
                 self as *mut _ as usize,
             )
         }
+        self.state = ProcessState::Paused;
     }
 
     pub fn new_supervisor<C: FnOnce(&mut Process)>(
@@ -53,10 +72,10 @@ impl Process {
         this.trap_frame.general_registers[Registers::Sp as usize] =
             this.kernel_allocated_stack.as_ref().unwrap().as_ptr() as usize;
         this.trap_frame.pc = function as usize;
-        this.trap_frame.interrupt_stack = 0x8700_0000 as usize;
         let this_frame = unsafe { read_sscratch().as_mut().unwrap() };
         this.trap_frame.satp = this_frame.satp;
         this.trap_frame.kernel_satp = this_frame.satp;
+        this.trap_frame.interrupt_stack = this_frame.interrupt_stack;
 
         constructor(&mut this);
 
@@ -65,3 +84,5 @@ impl Process {
         this
     }
 }
+
+pub type ProcessContainer = Arc<Mutex<Process>>;

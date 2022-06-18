@@ -103,5 +103,6 @@ struct AtomicsAndSpinlocks;
 impl ThreadLocality for AtomicsAndSpinlocks {
     type Locking<T> = AtomicLocking<T>;
     type Refcount<T> = AtomicRefcount<T>;
+    type RefcountWeak<T> = AtomicRefcountWeak<T>;
     type RwLocking<T> = AtomicRwLocking<T>;
 }

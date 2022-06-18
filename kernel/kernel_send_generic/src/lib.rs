@@ -20,6 +20,7 @@ pub trait RwLocking<T> {
     fn write(&self) -> Self::WriteGuard<'_, T>;
     fn read(&self) -> Self::ReadGuard<'_, T>;
 }
+
 pub trait Locking<T> {
     type LockGuard<'this, Q>: DerefMut<Target = Q>
     where
@@ -62,4 +63,5 @@ pub trait ThreadLocality {
     type RwLocking<T>: RwLocking<T>;
     type Locking<T>: Locking<T>;
     type Refcount<T>: Refcount<T>;
+    type RefcountWeak<T>: RefcountWeak<T>;
 }

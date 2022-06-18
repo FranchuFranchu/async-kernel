@@ -15,6 +15,7 @@ extern "C" {
 
     fn s_trap_vector();
     fn new_hart();
+    fn hart_entry_point();
 }
 
 pub struct Uart {
@@ -112,15 +113,35 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
     );
 
     unsafe {
-        let main = core::mem::transmute::<usize, extern "C" fn(usize, usize, usize, usize, usize)>(
-            0xffffffff80000000,
-        );
+        let main = core::mem::transmute::<
+            usize,
+            extern "C" fn(usize, usize, usize, usize, usize, usize),
+        >(0xffffffff80000000);
         main(
             hartid,
             opaque,
-            0x7f80000000,
+            sv_bits,
             padded_len,
-            &_stack_start as *const _ as usize,
+            &_stack_start as *const _ as usize + gap,
+            hart_entry_point as usize,
+        );
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn hart_entry(hartid: usize) {
+    unsafe {
+        let main = core::mem::transmute::<
+            usize,
+            extern "C" fn(usize, usize, usize, usize, usize, usize),
+        >(0xffffffff80000000);
+        main(
+            hartid,
+            0,
+            39,
+            0,
+            kernel_cpu::read_sp(),
+            hart_entry_point as usize,
         );
     }
 }

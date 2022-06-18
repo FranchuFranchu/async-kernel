@@ -12,10 +12,13 @@ kernel_allocator = { path = "../kernel_allocator" }
 kernel_executor = { path = "../kernel_executor" }
 kernel_lock = { path = "../kernel_lock" }
 kernel_printer = { path = "../kernel_printer" }
+kernel_process = { path = "../kernel_process" }
+kernel_paging = { path = "../kernel_paging" }
 kernel_sbi = { path = "../kernel_sbi" }
 kernel_send_generic = { path = "../kernel_send_generic" }
 kernel_util = { path = "../kernel_util" }
 kernel_chip_drivers = { path = "../kernel_chip_drivers" }
+kernel_syscall = { path = "../kernel_syscall" }
 sbi = "*"
 fdt = "*"
 static-box = "*"
