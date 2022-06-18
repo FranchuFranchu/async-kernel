@@ -64,6 +64,14 @@ macro_rules! println
 
 extern crate kernel_allocator;
 
+pub fn phys_to_virt(phys_addr: usize) -> usize {
+    phys_addr
+}
+
+pub fn virt_to_phys(virt_addr: usize) -> usize {
+    virt_addr
+}
+
 #[no_mangle]
 pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
     static ALREADY_BOOTED: AtomicBool = AtomicBool::new(false);
@@ -73,13 +81,20 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
         println!("{:?}", "Already booted!");
         loop {}
     }
-    //unsafe { kernel_allocator::init_from_pointers(&_heap_start as *const _ as
-    // *const _, &_heap_end as *const _ as *const _) };
+
+    // TODO: Determine the paging scheme that will be used
     let sv_bits = 39;
     let gap = (0usize.wrapping_sub(1 << 38));
 
+    // Create page tables that will be used for both us and the kernel payload
+    // 0..gap will be mapped 1:1 physical memory
+    // gap..usize::MAX will be mapped 1:1 to physical memory
     let mborrow = unsafe { &mut TABLE };
-    let mut root_table = kernel_paging::Sv39 { table: mborrow };
+    let mut root_table = kernel_paging::Sv39 {
+        table: mborrow,
+        phys_to_virt,
+        virt_to_phys,
+    };
 
     unsafe { root_table.map(0, 0, 1 << 38, 0xf) };
     unsafe { root_table.map(0, 1 << 38, 1 << 38, 0xf) };
@@ -87,9 +102,8 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
     let addr = mborrow as *mut _ as usize;
     assert!(addr & 4095 == 0);
     let mut satp = (addr) >> 12;
-    unsafe { (0x1000_0000 as *mut u8).write_volatile(65) };
-    println!("{:x}", pre_main as usize);
     satp |= 8 << 60;
+
     unsafe {
         core::arch::asm!("
             csrw satp, {0}
@@ -98,13 +112,24 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
     }
 
     let mborrow = unsafe { &mut TABLE };
-    let mut root_table = kernel_paging::Sv39 { table: mborrow };
+    let mut root_table = kernel_paging::Sv39 {
+        table: mborrow,
+        phys_to_virt,
+        virt_to_phys,
+    };
 
     let start: usize = unsafe { &_heap_start as *const _ as usize };
     let end: usize = start + 0x10000;
 
     kernel_allocator::init_from_pointers(start as *const _, end as *const _);
     let padded_len = ((ALIGNED_BYTES.len()) / 4096 + 1) * 4096;
+
+    // Change the page table mapping
+    // Now, in addition to the above mappings:
+    // usize::MAX-0x80000000..usize::MAX-0x80000000+payload.len() will be
+    // mapped to the kernel payload.
+    // The kernel payload has been linked with usize::MAX-0x80000000 as its
+    // base virtual address,
     root_table.map(
         ALIGNED_BYTES.as_ptr() as usize,
         0x7f80000000,
@@ -140,7 +165,7 @@ pub extern "C" fn hart_entry(hartid: usize) {
             0,
             39,
             0,
-            kernel_cpu::read_sp(),
+            kernel_cpu::read_sp() + 0xffffffc000000000,
             hart_entry_point as usize,
         );
     }

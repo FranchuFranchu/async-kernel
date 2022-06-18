@@ -8,6 +8,8 @@ where
     [(); 4096 / PTESIZE]: Sized,
 {
     pub table: &'table mut Table<PTESIZE>,
+    pub phys_to_virt: fn(usize) -> usize,
+    pub virt_to_phys: fn(usize) -> usize,
 }
 
 /// Gets the offset of a virtual page number `i` with ptesize `ptesize`
@@ -107,7 +109,7 @@ where
             // Otherwise, this PTE is a pointer to the next level of the page
             // table.
             if let Some(this_table) = unsafe {
-                pte.try_as_table()
+                pte.try_as_table(self.phys_to_virt)
                     .map(|s| (s as *const Table<PTESIZE>).as_ref().unwrap())
             } {
                 // Let i = i − 1. If i < 0, stop and raise a page-fault
@@ -119,7 +121,15 @@ where
                 i -= 1;
                 table = this_table
             } else {
-                // Steps 5 to 7 are not done here.
+                // Steps 5 and 7 are not done here.
+
+                // 6. If i > 0 and pte.ppn[i − 1 : 0] != 0, this is a misaligned superpage; stop
+                // and raise a page-fault exception corresponding to the
+                // original access type
+
+                for j in 0..i {
+                    assert!(get_vpn_number(pte.address(), j, PTESIZE) == 0);
+                }
 
                 // 8. The translation is successful. The translated physical address is given as
                 // follows:
@@ -159,6 +169,8 @@ where
             length: usize,
             flags: usize,
             current_virt_offset: usize,
+            virt_to_phys: fn(usize) -> usize,
+            phys_to_virt: fn(usize) -> usize,
         ) where
             [(); 4096 / PTESIZE]: Sized,
         {
@@ -178,18 +190,27 @@ where
                 let current_address =
                     current_virt_offset + vpn_number * get_vpn_size(level, PTESIZE);
                 if level != 0 {
-                    if (((vpn_number == vpn_start)
-                        && ((get_vpn_size(level, PTESIZE)) - 1) & virtual_addr != 0)
-                        || ((vpn_number == vpn_end)
-                            && ((get_vpn_size(level, PTESIZE)) - 1)
-                                & (virtual_addr.wrapping_add(length))
-                                != 0))
-                        && entry.is_leaf()
+                    let start_misaligned = (get_vpn_size(level, PTESIZE) - 1) & virtual_addr != 0;
+                    let end_misaligned =
+                        (get_vpn_size(level, PTESIZE) - 1) & virtual_addr.wrapping_add(length) != 0;
+                    let physical_start_misaligned = (get_vpn_size(level, PTESIZE) - 1)
+                        & virtual_addr.wrapping_add(offset << 2)
+                        != 0;
+                    let physical_end_misaligned = (get_vpn_size(level, PTESIZE) - 1)
+                        & virtual_addr.wrapping_add(length).wrapping_add(offset << 2)
+                        != 0;
+                    if entry.is_leaf()
+                        && ((vpn_number == vpn_start
+                            && (start_misaligned || physical_start_misaligned))
+                            || (vpn_number == vpn_end
+                                && (end_misaligned || physical_end_misaligned)))
                     {
                         // Split a megapage
-                        unsafe { entry.split::<PTESIZE>(get_vpn_size(level - 1, PTESIZE)) };
+                        unsafe {
+                            entry.split::<PTESIZE>(get_vpn_size(level - 1, PTESIZE), virt_to_phys)
+                        };
                     }
-                    if let Some(table) = unsafe { entry.try_as_table_mut() } {
+                    if let Some(table) = unsafe { entry.try_as_table_mut(phys_to_virt) } {
                         map_internal::<PTESIZE>(
                             level - 1,
                             table,
@@ -198,6 +219,8 @@ where
                             length,
                             flags,
                             current_address,
+                            virt_to_phys,
+                            phys_to_virt,
                         );
                     } else {
                         entry.value = (current_address >> 2 | flags).wrapping_add(offset)
@@ -221,6 +244,8 @@ where
             length,
             flags,
             0,
+            self.virt_to_phys,
+            self.phys_to_virt,
         );
     }
 

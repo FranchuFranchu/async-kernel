@@ -15,7 +15,7 @@ impl core::fmt::Write for Uart {
 
 pub fn get_uart() -> Uart {
     Uart {
-        address: 0x1000_0000 as _,
+        address: 0xffff_ffc0_1000_0000usize as _,
     }
 }
 

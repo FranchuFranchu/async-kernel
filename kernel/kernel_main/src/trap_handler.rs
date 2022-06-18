@@ -26,11 +26,13 @@ pub unsafe fn trap_handler() {
     let cause = (cause << 1) >> 1;
 
     if is_interrupt {
+        // Prevent interrupt from firing again after we exit
         make_interrupt_nonpending(cause);
     } else {
         println!("Error: {}.", XCAUSE_DESCRIPTION[cause]);
     }
 
+    // Now, jump to the trap frame in sscratch
     let ctx = (*read_sscratch()).restore_context;
     if ctx != 0 {
         switch_to_supervisor_frame(ctx as *mut _);

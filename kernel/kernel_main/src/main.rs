@@ -7,6 +7,7 @@
     const_fn_trait_bound,
     waker_getters,
     default_alloc_error_handler,
+    generic_arg_infer,
     naked_functions,
     asm_sym,
     asm_const
@@ -27,8 +28,8 @@ use core::{
 };
 
 use kernel_cpu::{
-    csr::status, read_satp, read_sie, read_sscratch, read_sstatus, write_sie, write_sscratch,
-    write_sstatus, write_stvec,
+    csr::status, read_satp, read_sie, read_sscratch, read_sstatus, write_satp, write_sie,
+    write_sscratch, write_sstatus, write_stvec,
 };
 use kernel_executor::{LocalExecutor, SendExecutor, SendExecutorHandle};
 use kernel_process::Process;
@@ -116,6 +117,18 @@ pub async fn setup_hart(hartid: usize) -> ! {
 
 pub static SV_BITS: AtomicUsize = AtomicUsize::new(0);
 pub static GAP: AtomicUsize = AtomicUsize::new(0);
+/// The beginning of the kernel image in physical memory
+pub static KERNEL_START_PHYSICAL: AtomicUsize = AtomicUsize::new(0);
+/// The beginning of the kernel image in virtual memory
+pub const KERNEL_START_VIRTUAL: usize = usize::MAX - 0x8000_0000 + 1;
+
+pub fn phys_to_virt(phys_addr: usize) -> usize {
+    phys_addr + GAP.load(Ordering::Relaxed)
+}
+
+pub fn virt_to_phys(virt_addr: usize) -> usize {
+    virt_addr - GAP.load(Ordering::Relaxed)
+}
 
 #[no_mangle]
 pub fn main(
@@ -134,6 +147,10 @@ pub fn main(
             kernel_cpu::wfi,
         )
     };
+
+    SV_BITS.store(sv_bits, Ordering::Release);
+    GAP.store(0usize.wrapping_sub(1 << (sv_bits - 1)), Ordering::Release);
+
     unsafe { (0x1000_0000 as *mut u8).write_volatile(67) };
     unsafe { (0x1000_0000 as *mut u8).write_volatile(0xa) };
 
@@ -141,10 +158,16 @@ pub fn main(
     let end: usize = 0xffffffc08700_0000;
     kernel_allocator::init_from_pointers(start as *const _, end as *const _);
     println!("{:?}", "Reached kernel!");
-    println!("{:x}", stack_start);
 
-    SV_BITS.store(sv_bits, Ordering::Release);
-    GAP.store(0usize.wrapping_sub(1 << (sv_bits - 1)), Ordering::Release);
+    unsafe {
+        let mut table = ((read_satp() << 12) as *mut Table<_>).as_mut().unwrap();
+        let sv39 = Sv39 {
+            table: &mut table,
+            phys_to_virt,
+            virt_to_phys,
+        };
+        KERNEL_START_PHYSICAL.store(sv39.query(0xffffffff8000_0000).unwrap(), Ordering::Release);
+    }
 
     kernel_executor::run_neverending_future(
         alloc::boxed::Box::pin(async_main(hartid, opaque, hart_entry_point)),
@@ -181,6 +204,8 @@ fn setup_hart_state_and_metadata(hartid: usize) {
     }
 }
 
+use kernel_paging::{Sv39, Table};
+
 async fn async_main(hartid: usize, _opaque: usize, hart_entry_point: usize) -> ! {
     let executor = SendExecutor::new();
     unsafe { GLOBAL_EXECUTOR.replace(executor.lock().handle()) };
@@ -210,12 +235,30 @@ async fn async_main(hartid: usize, _opaque: usize, hart_entry_point: usize) -> !
         Box::leak(stack);
     }
 
-    println!("{:?}", "all harts started up!");
-
     common_hart_code().await
 }
 
 async fn common_hart_code() -> ! {
+    let mut table = kernel_paging::Table::boxed_zeroed();
+    let mut sv39 = Sv39 {
+        table: &mut *table,
+        phys_to_virt,
+        virt_to_phys,
+    };
+
+    let kernel_physical = KERNEL_START_PHYSICAL.load(Ordering::Relaxed);
+    sv39.map(0, 1 << 38, 1 << 38, 0xf);
+    sv39.map(kernel_physical, KERNEL_START_VIRTUAL, 0x10_0000, 0xf);
+    unsafe { assert!(sv39.query(KERNEL_START_VIRTUAL + 0x1000).unwrap() != 0) };
+    drop(sv39);
+
+    let mut addr: usize = &*table as *const _ as usize;
+    assert!(addr & 4095 == 0);
+    let mut satp: usize = virt_to_phys(addr) >> 12;
+    satp |= 8 << 60;
+
+    unsafe { write_satp(satp) }
+
     HartLocals::current()
         .local_executor
         .as_ref()
@@ -240,6 +283,11 @@ async fn common_hart_code() -> ! {
 
             loop {
                 set_relative_timer(0x1_000_000);
+                static OUTPUT_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+                {
+                    let l = OUTPUT_LOCK.lock();
+                    println!("{:?}", "Switch to process (all is going well)");
+                }
                 process.lock().switch_to_and_come_back();
             }
         })));
@@ -277,7 +325,7 @@ impl core::fmt::Write for Uart {
 
 pub fn get_uart() -> Uart {
     Uart {
-        address: 0x1000_0000 as _,
+        address: (GAP.load(Ordering::Relaxed) + 0x1000_0000usize) as _,
     }
 }
 

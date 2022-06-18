@@ -1,5 +1,11 @@
 #![cfg_attr(not(test), no_std)]
-#![feature(int_roundings, generic_const_exprs, int_log)]
+#![feature(
+    int_roundings,
+    generic_const_exprs,
+    int_log,
+    new_uninit,
+    maybe_uninit_as_bytes
+)]
 
 mod paging;
 pub use paging::*;
@@ -92,43 +98,59 @@ impl Entry {
 impl Entry {
     /// # Safety
     /// The entry's value must be a valid physical address pointer
-    pub unsafe fn as_table_mut<const PTESIZE: usize>(&mut self) -> &mut Table<PTESIZE>
+    pub unsafe fn as_table_mut<const PTESIZE: usize>(
+        &mut self,
+        phys_to_virt: fn(usize) -> usize,
+    ) -> &mut Table<PTESIZE>
     where
         [(); 4096 / PTESIZE]: Sized,
     {
         assert!(self.value & 1 != 0);
-        (self.address() as *mut Table<PTESIZE>).as_mut().unwrap()
+        (phys_to_virt(self.address()) as *mut Table<PTESIZE>)
+            .as_mut()
+            .unwrap()
     }
 
     /// # Safety
     /// The entry's value must be a valid physical address pointer
-    pub unsafe fn as_table<const PTESIZE: usize>(&self) -> &Table<PTESIZE>
+    pub unsafe fn as_table<const PTESIZE: usize>(
+        &self,
+        phys_to_virt: fn(usize) -> usize,
+    ) -> &Table<PTESIZE>
     where
         [(); 4096 / PTESIZE]: Sized,
     {
         assert!(self.value & 1 != 0);
-        (self.address() as *mut Table<PTESIZE>).as_ref().unwrap()
+        (phys_to_virt(self.address()) as *mut Table<PTESIZE>)
+            .as_ref()
+            .unwrap()
     }
 
-    pub unsafe fn try_as_table_mut<const PTESIZE: usize>(&mut self) -> Option<&mut Table<PTESIZE>>
+    pub unsafe fn try_as_table_mut<const PTESIZE: usize>(
+        &mut self,
+        phys_to_virt: fn(usize) -> usize,
+    ) -> Option<&mut Table<PTESIZE>>
     where
         [(); 4096 / PTESIZE]: Sized,
     {
         if self.is_leaf() {
             None
         } else {
-            Some(self.as_table_mut())
+            Some(self.as_table_mut(phys_to_virt))
         }
     }
 
-    pub unsafe fn try_as_table<const PTESIZE: usize>(&self) -> Option<&Table<PTESIZE>>
+    pub unsafe fn try_as_table<const PTESIZE: usize>(
+        &self,
+        phys_to_virt: fn(usize) -> usize,
+    ) -> Option<&Table<PTESIZE>>
     where
         [(); 4096 / PTESIZE]: Sized,
     {
         if self.is_leaf() {
             None
         } else {
-            Some(self.as_table())
+            Some(self.as_table(phys_to_virt))
         }
     }
 
@@ -147,11 +169,14 @@ impl Entry {
     /// MEGAPAGE_SIZE, GIGAPAGE_SIZE, etc constants If this entry is a
     /// megapage, for example, the increment should be PAGE_SIZE
 
-    pub unsafe fn split<const PTESIZE: usize>(&mut self, increment: usize)
-    where
+    pub unsafe fn split<const PTESIZE: usize>(
+        &mut self,
+        increment: usize,
+        virt_to_phys: fn(usize) -> usize,
+    ) where
         [(); 4096 / PTESIZE]: Sized,
     {
-        let mut table = Box::new(Table::<PTESIZE>::zeroed());
+        let mut table = Table::<PTESIZE>::boxed_zeroed();
         let mut current_address = self.value & EntryBits::ADDRESS_MASK;
 
         let flags = self.value & !(EntryBits::ADDRESS_MASK);
@@ -160,7 +185,7 @@ impl Entry {
             entry.value = flags | current_address;
             current_address += increment >> 2;
         }
-        self.value = 1 | ((&*table as *const Table<PTESIZE> as usize) >> 2);
+        self.value = 1 | (virt_to_phys(&*table as *const Table<PTESIZE> as usize) >> 2);
         Box::leak(table);
 
         debug_assert!(!self.is_leaf());
@@ -225,6 +250,12 @@ where
         Table {
             entries: [Entry { value: 0 }; 4096 / PTESIZE],
         }
+    }
+
+    pub fn boxed_zeroed() -> Box<Self> {
+        let mut table = Box::new_uninit();
+        table.as_bytes_mut().into_iter().map(|s| s.write(0));
+        unsafe { table.assume_init() }
     }
 }
 

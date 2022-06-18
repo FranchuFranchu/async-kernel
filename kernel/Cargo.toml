@@ -1,7 +1,7 @@
 [workspace]
 members = [
 	"kernel_main",
-	"kernel_pre_main",
+	"kernel_bootloader",
 	"kernel_allocator",
 	"kernel_executor",
 	"kernel_sbi",

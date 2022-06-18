@@ -13,9 +13,9 @@ cd ../..
 
 ./link.sh 64 riscv64gc-unknown-none-elf
 
-cd kernel/kernel_pre_main
+cd kernel/kernel_bootloader
 cargo build
 cd ../..
 
-./run.sh 64 riscv64gc-unknown-none-elf kernel/target/riscv64gc-unknown-none-elf/debug/kernel_pre_main
+./run.sh 64 riscv64gc-unknown-none-elf kernel/target/riscv64gc-unknown-none-elf/debug/kernel_bootloader
 
