@@ -59,6 +59,9 @@
 	.endr
 	
 	1:
+	# Clear AMO reservation
+	lw t6, (t5)
+	sc.w x0, t6, (t5)
 .endm
 
 # IN: t6: Trap frame pointer
@@ -86,6 +89,10 @@
 .macro restore_volatile_registers
 	# Now load the trap frame back into t6
 	csrr	t6, sscratch
+	
+	# Clear AMO reservation
+	lw t5, (t6)
+	sc.w x0, t5, (t6)
 
 	load_from_trap_frame
 	# Since we ran this loop 31 times starting with i = 1,
@@ -145,6 +152,10 @@ s_trap_vector:
 	lx a0, XLEN*39(t5)
 	csrw sie, a0
 	
+	li t0, 0x10000000
+	li t1, 65
+	sb t1, (t0)
+	
 	restore_volatile_registers
 
 trap_exit:
@@ -157,17 +168,6 @@ switch_to_supervisor_frame:
 	csrw sie, x0
 	// Load the trap frame
 	csrw sscratch, a0
-	// When SRET is executed, set PC to the old PC
-	lx t0, XLEN*32(a0)
-	csrw sepc, t0
-	
-	lx t0, XLEN*39(a0)
-	csrw sie, t0
-	
-	lx t0, XLEN*37(a0)
-	sfence.vma x0, x0
-	csrw satp, t0
-	sfence.vma x0, x0
 	
 	// Set SPP, which will make it so that when SRET is executed, we are in S mode
 	csrr t0, sstatus
@@ -175,11 +175,24 @@ switch_to_supervisor_frame:
 	or t0, t1, t0
 	csrw sstatus, t0
 	
+	// When SRET is executed, set PC to the old PC
+	lx t0, XLEN*32(a0)
+	csrw sepc, t0
+	
+	
+	lx t0, XLEN*37(a0)
+	csrw satp, t0
+	sfence.vma x0, x0
+	
+	
+	lx t0, XLEN*39(a0)
+	csrw sie, t0
+	
 	restore_volatile_registers
+	fence rw, rw
 	
 .global switch_to_supervisor_frame_end
 switch_to_supervisor_frame_end:
-
 	sret
 
 .global switch_to_user_frame	

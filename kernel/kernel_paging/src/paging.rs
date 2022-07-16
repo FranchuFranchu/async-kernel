@@ -90,6 +90,7 @@ where
 
         // Here, we're renaming A to table
         let mut table: &Table<PTESIZE> = self.table;
+        crate::println!("{:p}", self.table);
         let mut i = LEVELS - 1;
         loop {
             // 2. Let pte be the value of the PTE at address a+va.vpn[i]×PTESIZE. (For Sv32,

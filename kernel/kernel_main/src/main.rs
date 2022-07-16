@@ -5,6 +5,7 @@
     const_fn_fn_ptr_basics,
     panic_info_message,
     const_fn_trait_bound,
+    strict_provenance,
     waker_getters,
     default_alloc_error_handler,
     drain_filter,
@@ -34,7 +35,7 @@ use core::{
 
 use kernel_cpu::{
     csr::status, read_satp, read_sie, read_sscratch, read_sstatus, write_satp, write_sie,
-    write_sscratch, write_sstatus, write_stvec,
+    write_sscratch, write_sstatus, write_stvec, in_interrupt_context, read_sip,
 };
 use kernel_executor::{LocalExecutor, SendExecutor, SendExecutorHandle};
 use kernel_process::Process;
@@ -43,7 +44,7 @@ use kernel_util::boxed_slice_with_alignment_uninit;
 use local_notify::Notify;
 use sbi::SbiError;
 
-use crate::{timer::set_relative_timer, trap_handler::handle_come_back_from_process, syscall::{wait_until_process_is_woken}};
+use crate::{timer::set_relative_timer, trap_handler::handle_come_back_from_process, syscall::{wait_until_process_is_woken}, asm::do_supervisor_syscall_2};
 
 pub mod asm;
 pub mod local_notify;
@@ -66,6 +67,14 @@ extern "C" {
     static _stack_start: c_void;
     static _stack_end: c_void;
 
+    static _execute_start: c_void;
+    static _execute_end: c_void;
+    static _readonly_start: c_void;
+    static _readonly_end: c_void;
+    static _readwrite_start: c_void;
+    static _readwrite_end: c_void;
+    static _stack_heap_start: c_void;
+    
     fn s_trap_vector();
     fn new_hart();
 }
@@ -158,9 +167,7 @@ pub fn main(
 
         kernel_executor::run_neverending_future(
             alloc::boxed::Box::pin(setup_hart(hartid)),
-            || {
-                todo!()
-            },
+            idle_task,
         )
     };
     
@@ -201,13 +208,32 @@ pub fn main(
     
     kernel_executor::run_neverending_future(
         alloc::boxed::Box::pin(async_main(hartid, opaque, hart_entry_point)),
-        || {
-            todo!()
-        },
+        idle_task,
     )
 }
 
 static mut GLOBAL_EXECUTOR: Option<SendExecutorHandle> = None;
+
+fn idle_task() {
+    fn idle_task_fn() {
+        loop {
+            kernel_cpu::wfi();
+        }
+    }
+    if read_sip() != 0 {
+        // There was an interrupt that went unhandled all the way here.
+        handle_come_back_from_process(None);
+    }
+    let process = Process::new_supervisor(
+        |mut process| {
+            process.name = Some(alloc::string::String::from("Idle task"));
+        },
+        idle_task_fn,
+    );
+
+    process.lock().switch_to_and_come_back();
+    assert!(in_interrupt_context() == true);
+}
 
 fn setup_hart_state_and_metadata(hartid: usize) {
     let local_executor = LocalExecutor::new();
@@ -226,7 +252,7 @@ fn setup_hart_state_and_metadata(hartid: usize) {
         //loop_forever_black_box();
         frame.pid = 1;
 
-        let stack = boxed_slice_with_alignment_uninit::<u8>(4096*4, 4096);
+        let stack = boxed_slice_with_alignment_uninit::<u8>(4096, 4096);
         let stack_addr = stack.as_ptr_range().end as usize;
         Box::leak(stack);
 
@@ -238,7 +264,7 @@ fn setup_hart_state_and_metadata(hartid: usize) {
     }
 }
 
-use kernel_paging::{Sv39, Table};
+use kernel_paging::{Sv39, Table, EntryBits};
 
 async fn async_main(hartid: usize, opaque: usize, hart_entry_point: usize) -> ! {
     
@@ -278,6 +304,11 @@ async fn async_main(hartid: usize, opaque: usize, hart_entry_point: usize) -> ! 
     common_hart_code().await
 }
 
+#[no_mangle]
+fn debug_test_fn() {
+    println!("{:#x}", read_sstatus());
+}
+
 async fn common_hart_code() -> ! {
     // Create a page table for this hart.
     let mut table = kernel_paging::Table::boxed_zeroed();
@@ -287,17 +318,35 @@ async fn common_hart_code() -> ! {
         virt_to_phys,
     };
     let kernel_physical = KERNEL_START_PHYSICAL.load(Ordering::Relaxed);
-    sv39.map(0, 1 << 38, 1 << 38, 0xf);
-    sv39.map(kernel_physical, KERNEL_START_VIRTUAL, 0x50_0000, 0xf);
+    sv39.map(0, 1 << 38, 1 << 38, EntryBits::VALID | EntryBits::READ | EntryBits::WRITE);
+    // Map executable area
+    // Turns a kernel virtual address into a physical one
+    let kernel_virt_to_phys = |addr| {
+        kernel_physical.wrapping_add(addr).wrapping_sub(KERNEL_START_VIRTUAL)
+    };
+    let text_start = unsafe { core::ptr::addr_of!(_execute_start).addr() };
+    let text_size = unsafe { core::ptr::addr_of!(_execute_end).addr() - core::ptr::addr_of!(_execute_start).addr() };
+    let ro_start = unsafe { core::ptr::addr_of!(_readonly_start).addr() };
+    let ro_size = unsafe { core::ptr::addr_of!(_readonly_end).addr() - core::ptr::addr_of!(_readonly_start).addr() };
+    let rw_start = unsafe { core::ptr::addr_of!(_readwrite_start).addr() };
+    let rw_size = unsafe { core::ptr::addr_of!(_readwrite_end).addr() - core::ptr::addr_of!(_readwrite_start).addr() };
+    let rest_start = unsafe { core::ptr::addr_of!(_stack_heap_start).addr() };
+    sv39.map(kernel_virt_to_phys(text_start), text_start, text_size, EntryBits::VALID | EntryBits::READ | EntryBits::EXECUTE);
+    sv39.map(kernel_virt_to_phys(ro_start), ro_start, ro_size, EntryBits::VALID | EntryBits::READ);
+    sv39.map(kernel_virt_to_phys(rw_start), rw_start, rw_size, EntryBits::VALID | EntryBits::READ | EntryBits::WRITE);
+    sv39.map(kernel_virt_to_phys(rest_start), rest_start, 0x50_000, EntryBits::VALID | EntryBits::READ | EntryBits::WRITE);
     unsafe { assert!(sv39.query(KERNEL_START_VIRTUAL + 0x1000).unwrap() != 0) };
     drop(sv39);
 
     let addr: usize = &*table as *const _ as usize;
+    println!("SATP ADDR {:#x}", addr);
     assert!(addr & 4095 == 0);
     let mut satp: usize = virt_to_phys(addr) >> 12;
     satp |= 8 << 60;
 
     unsafe { write_satp(satp) }
+    unsafe { (*read_sscratch()).satp = satp }
+    unsafe { (*read_sscratch()).kernel_satp = satp }
     
     
     // Create the PLIC instance
@@ -315,11 +364,14 @@ async fn common_hart_code() -> ! {
         .spawn(Box::new(Box::pin(async {
             assert!(read_sie() == 0);
             fn test() {
-                
+                disable_interrupts();
                 unsafe { write_sstatus(read_sstatus() | status::SIE) };
+                unsafe { write_sstatus(read_sstatus() | status::SPP) };
                 enable_interrupts();
-
-
+                
+                println!("{:?}", "will wait");
+                unsafe { do_supervisor_syscall_2(10, 10, 0) };
+                println!("{:?}", "syscall stop");
                 
                 loop {}
             }

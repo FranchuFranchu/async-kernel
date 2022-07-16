@@ -13,7 +13,7 @@ impl core::fmt::Write for Uart {
 
 pub fn get_uart() -> Uart {
     Uart {
-        address: 0x1000_0000 as _,
+        address: if kernel_cpu::read_satp() == 0 { 0x1000_0000 } else { 0x1000_0000u64 + 0xffff_ffc0_0000_0000u64} as _,
     }
 }
 

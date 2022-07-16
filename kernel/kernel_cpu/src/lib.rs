@@ -309,6 +309,7 @@ pub mod csr {
         pub const MIE: usize = 1 << 3;
         pub const SPIE: usize = 1 << 5;
         pub const MPIE: usize = 1 << 7;
+        pub const SPP: usize = 1 << 8;
     }
     /// XCAUSE
     pub mod cause {
@@ -332,7 +333,7 @@ pub mod csr {
     #[cfg(target_arch = "riscv64")]
     pub const SATP_SV48: usize = 9 << 60;
 
-    pub const XCAUSE_DESCRIPTION: [&'static str; 16] = [
+    pub const XCAUSE_DESCRIPTION: [&str; 16] = [
         "Instruction address misaligned",
         "Instruction access fault",
         "Illegal instruction",

@@ -86,13 +86,17 @@ pub unsafe fn trap_handler() {
         println!("Error: {}.", XCAUSE_DESCRIPTION[cause]);
         
         let tval = read_stval();
-        println!("{:#x}", trap_frame.satp);
+        println!("SATP: {:#x}", trap_frame.satp);
         let sv39 = Sv39::from_satp(trap_frame.satp, phys_to_virt, virt_to_phys);
         let is_supervisor = (read_sstatus() & (1 << 8)) != 0;
         let permissions = 
             if !is_supervisor { EntryBits::USER as u8 } else { 0 };
-        println!("{:?}", "Simulating page access:");
-        println!("{:#x} -> {:#x}", tval, sv39.query_permissions(tval, permissions).unwrap());
+        if tval != 0 {
+            println!("{:?}", "Simulating page access:");
+            println!("{:#x} -> {:?}", tval, sv39.query_permissions(tval, permissions));
+        } else {
+            println!("TVAL = 0");
+        }
         
         loop_forever_black_box();
         unsafe { kernel_process::switch_to_supervisor_frame(read_sscratch()) }

@@ -6,7 +6,7 @@ use core::{task::{Waker, Poll}, future::Future, borrow::BorrowMut, sync::atomic:
 
 use alloc::{boxed::Box, string::String, sync::{Arc, Weak}, task::Wake, vec::Vec};
 
-use kernel_cpu::{read_satp, read_sscratch, Registers, write_sscratch};
+use kernel_cpu::{read_satp, read_sscratch, Registers, write_sscratch, write_sstatus, read_sstatus, csr::status};
 use kernel_lock::shared::Mutex;
 use kernel_trap_frame::TrapFrame;
 use kernel_util::boxed_slice_with_alignment;
@@ -68,6 +68,7 @@ impl Process {
             a2.trap_frame.restore_context = trap_frame as usize;
             let frame: &TrapFrame = &a2.trap_frame;
             assert!(frame.satp != 0);
+            write_sstatus((read_sstatus() & !status::SIE) | status::SPIE);
             switch_to_supervisor_frame(frame as *const _ as *mut _);
         }
         let mut my_trap_frame = Box::new(TrapFrame::zeroed_interrupt_context());
@@ -108,6 +109,7 @@ impl Process {
         this.trap_frame.inherit_from(&this_frame);
         this.trap_frame.satp = this_frame.satp;
         this.trap_frame.kernel_satp = this_frame.satp;
+        this.trap_frame.sie = 0x222;
 
         constructor(&mut this);
 
