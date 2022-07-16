@@ -40,7 +40,7 @@ qemu-system-riscv$BITS $QEMUOPTS \
 	-d $QEMUOPT_D \
 	-blockdev driver=file,filename=`dirname $0`/drive.img,node-name=hda \
 	-device virtio-blk-device,drive=hda \
-	-smp 3 \
+	-smp 1 \
 	-m 128M \
 	-device ne2k_pci \
 	-kernel $3

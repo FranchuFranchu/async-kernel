@@ -5,4 +5,4 @@ extern crate alloc;
 extern crate kernel_printer;
 
 mod syscall;
-use syscall::do_syscall;
+pub use syscall::*;

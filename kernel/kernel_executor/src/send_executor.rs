@@ -61,7 +61,7 @@ impl SendExecutorHandle {
 
 impl SendExecutor {
     pub fn new() -> Arc<Mutex<Self>> {
-        let mut this = Arc::new(Mutex::new(Self::default()));
+        let this = Arc::new(Mutex::new(Self::default()));
         this.lock().this = Arc::downgrade(&this);
         this
     }
@@ -81,11 +81,11 @@ impl SendExecutor {
             let waker = Arc::new(SendWaker {
                 executor: Arc::downgrade(&self.wake_queue),
                 wakers: Arc::downgrade(&self.wakers),
-                index: index,
+                index,
             })
             .into();
             let mut cx = Context::from_waker(&waker);
-            if let Poll::Ready(_) = Pin::new(task.as_mut().unwrap()).poll(&mut cx) {
+            if Pin::new(task.as_mut().unwrap()).poll(&mut cx).is_ready() {
                 task.take();
             }
         }
@@ -114,9 +114,7 @@ impl SendExecutor {
         let index = if let Some(slot) = self
             .tasks
             .iter_mut()
-            .enumerate()
-            .filter(|(_, val)| val.is_none())
-            .next()
+            .enumerate().find(|(_, val)| val.is_none())
         {
             slot.1.replace(task);
             slot.0
@@ -145,13 +143,13 @@ impl Future for SendExecutor {
 impl Future for SendExecutorHandle {
     type Output = ();
 
-    fn poll(mut self: Pin<&mut Self>, context: &mut Context) -> Poll<()> {
+    fn poll(self: Pin<&mut Self>, context: &mut Context) -> Poll<()> {
         self.executor.lock().poll_all();
         for i in self.queue.lock().drain(..) {
             self.executor.lock().push_task(i);
         }
         let r = Pin::new(&mut *self.executor.lock()).poll(context);
-        if self.executor.lock().wake_pending() == false {
+        if !self.executor.lock().wake_pending() {
             for i in self.queue.lock().drain(..) {
                 self.executor.lock().push_task(i);
             }

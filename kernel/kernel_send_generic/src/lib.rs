@@ -34,10 +34,8 @@ pub struct SimpleLockWrapper<T>(pub T);
 
 impl<T, L: RwLocking<T>> Locking<T> for SimpleLockWrapper<L> {
     type LockGuard<'this, Q>
-    where
-        L: 'this,
-        Q: 'this,
-    = <L as RwLocking<T>>::WriteGuard<'this, Q>;
+    
+    = <L as RwLocking<T>>::WriteGuard<'this, Q> where L: 'this, Q: 'this;
 
     fn new(internal: T) -> Self {
         Self(L::new(internal))

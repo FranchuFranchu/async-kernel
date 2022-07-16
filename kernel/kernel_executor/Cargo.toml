@@ -8,5 +8,6 @@ edition = "2021"
 [dependencies]
 kernel_printer = { path = "../kernel_printer" }
 kernel_util = { path = "../kernel_util" }
+kernel_lock = { path = "../kernel_lock" }
 kernel_send_generic = { path = "../kernel_send_generic" }
 spin = "*"

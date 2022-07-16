@@ -1,8 +1,10 @@
 //! Maps the kernel to the higher half, then jumps to it.
 #![no_std]
 #![no_main]
-#![feature(bench_black_box, default_alloc_error_handler)]
-use core::{ffi::c_void, sync::atomic::AtomicBool};
+#![feature(bench_black_box, default_alloc_error_handler, naked_functions)]
+use core::{ffi::c_void, sync::atomic::AtomicBool, ops::{BitAnd, Add}};
+
+use kernel_cpu::{write_stvec, write_satp, fence_vma};
 core::arch::global_asm!(include_str!("../boot.S"));
 
 // Linker symbols
@@ -13,9 +15,26 @@ extern "C" {
     static _stack_start: c_void;
     static _stack_end: c_void;
 
-    fn s_trap_vector();
     fn new_hart();
     fn hart_entry_point();
+}
+
+#[naked]
+unsafe extern "C" fn s_trap_vector() {
+    core::arch::asm!("
+        nop
+        nop
+        la sp, _stack_start
+        j trap_handler
+    ", options(noreturn) );
+}
+
+#[no_mangle]
+unsafe fn trap_handler() {
+    write_satp(0);
+    fence_vma();
+    println!("{:?}", "Kernel trapped before setting up trap handler!");
+    loop {}
 }
 
 pub struct Uart {
@@ -81,10 +100,12 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
         println!("{:?}", "Already booted!");
         loop {}
     }
+    
+    unsafe { write_stvec((s_trap_vector as usize).bitand(!3).add(4)) };
 
     // TODO: Determine the paging scheme that will be used
     let sv_bits = 39;
-    let gap = (0usize.wrapping_sub(1 << 38));
+    let gap = 0usize.wrapping_sub(1 << 38);
 
     // Create page tables that will be used for both us and the kernel payload
     // 0..gap will be mapped 1:1 physical memory
@@ -136,6 +157,7 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
         ((ALIGNED_BYTES.len()) / 4096 + 1) * 4096,
         0xf,
     );
+    
 
     unsafe {
         let main = core::mem::transmute::<
@@ -184,12 +206,12 @@ struct AlignedTo<Align, Bytes: ?Sized> {
 }
 
 // dummy static used to create aligned data
-static ALIGNED: &'static AlignedTo<Align4096, [u8]> = &AlignedTo {
+static ALIGNED: &AlignedTo<Align4096, [u8]> = &AlignedTo {
     _align: [],
     bytes: *include_bytes!("../../../kernel_payload.bin"),
 };
 
-static ALIGNED_BYTES: &'static [u8] = &ALIGNED.bytes;
+static ALIGNED_BYTES: &[u8] = &ALIGNED.bytes;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {

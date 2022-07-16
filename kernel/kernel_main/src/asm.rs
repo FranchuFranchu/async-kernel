@@ -25,13 +25,13 @@ extern "C" {
     pub fn do_supervisor_syscall_2(number: usize, a0: usize, a1: usize);
     // todo complete this
     #[link_name = "do_supervisor_syscall"]
-    pub fn do_supervisor_syscall_3(number: usize, a0: usize, a1: usize);
+    pub fn do_supervisor_syscall_3(number: usize, a0: usize, a1: usize, a2: usize);
     #[link_name = "do_supervisor_syscall"]
-    pub fn do_supervisor_syscall_4(number: usize, a0: usize, a1: usize);
+    pub fn do_supervisor_syscall_4(number: usize, a0: usize, a1: usize, a2: usize, a3: usize);
     #[link_name = "do_supervisor_syscall"]
-    pub fn do_supervisor_syscall_5(number: usize, a0: usize, a1: usize);
+    pub fn do_supervisor_syscall_5(number: usize, a0: usize, a1: usize, a2: usize, a3: usize, a4: usize);
     #[link_name = "do_supervisor_syscall"]
-    pub fn do_supervisor_syscall_6(number: usize, a0: usize, a1: usize);
+    pub fn do_supervisor_syscall_6(number: usize, a0: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize);
     #[link_name = "do_supervisor_syscall"]
-    pub fn do_supervisor_syscall_7(number: usize, a0: usize, a1: usize);
+    pub fn do_supervisor_syscall_7(number: usize, a0: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize);
 }

@@ -13,9 +13,11 @@ pub struct TrapFrame {
     pub flags: usize,           // 36
     pub satp: usize,            // 37
     pub kernel_satp: usize,     // 38
-    pub hart_locals: usize,     // 39
-    pub process_raw_ptr: usize, // 40
-    pub restore_context: usize, // 41
+    pub sie: usize,             // 39
+    pub spie: usize,            // 40
+    pub hart_locals: usize,     // 41
+    pub process_raw_ptr: usize, // 42
+    pub restore_context: usize, // 43
 }
 
 impl TrapFrame {
@@ -32,6 +34,8 @@ impl TrapFrame {
             hart_locals: 0,
             process_raw_ptr: 0,
             restore_context: 0,
+            sie: 0,
+            spie: 0,
         }
     }
 

@@ -5,3 +5,4 @@ version = "0.1.0"
 [dependencies]
 slab_allocator_rs = "1.0.1"
 kernel_util = { path = "../kernel_util" }
+kernel_cpu = { path = "../kernel_cpu" }

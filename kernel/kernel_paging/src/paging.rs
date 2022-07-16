@@ -81,6 +81,9 @@ where
     [(); 4096 / PTESIZE]: Sized,
 {
     pub unsafe fn query(&self, virtual_addr: usize) -> Result<usize, PageLookupError> {
+        self.query_permissions(virtual_addr, 0)
+    }
+    pub unsafe fn query_permissions(&self, virtual_addr: usize, required_access: u8) -> Result<usize, PageLookupError> {
         // 1. Let a be satp.ppn × PAGESIZE, and let i = LEVELS − 1. (For Sv32,
         // PAGESIZE=212 and LEVELS=2.) The satp register must be active, i.e.,
         // the effective privilege mode must be S-mode or U-mode
@@ -98,6 +101,7 @@ where
             // that are reserved for future standard use are set within pte,
             // stop and raise a page-fault exception corresponding
             // to the original access type.
+            crate::println!("{:?}", pte);
             if pte.value & EntryBits::VALID == 0 {
                 return Err(PageLookupError::Invalid);
             } else if pte.value & EntryBits::READ == 0 && pte.value & EntryBits::WRITE == 1 {
@@ -118,18 +122,51 @@ where
                 if i == 0 {
                     return Err(PageLookupError::PageFault);
                 }
+                
+                if pte.value & 1 == 0 {
+                    return Err(PageLookupError::Invalid)
+                }
+                
+                // For non-leaf PTEs, the D, A, and U bits are reserved for future standard use. Until their use is
+                // defined by a standard extension, they must be cleared by software for forward compatibility.
+                if pte.flags() & (EntryBits::DIRTY | EntryBits::ACCESSED | EntryBits::USER) != 0 {
+                    return Err(PageLookupError::DAUReservedBitSet)
+                }
+                
                 i -= 1;
                 table = this_table
             } else {
-                // Steps 5 and 7 are not done here.
 
                 // 6. If i > 0 and pte.ppn[i − 1 : 0] != 0, this is a misaligned superpage; stop
                 // and raise a page-fault exception corresponding to the
                 // original access type
 
                 for j in 0..i {
-                    assert!(get_vpn_number(pte.address(), j, PTESIZE) == 0);
+                    if get_vpn_number(pte.address(), j, PTESIZE) != 0 {
+                        return Err(PageLookupError::MisalignedSuperpage)
+                    }
                 }
+                
+                
+                // A leaf PTE has been found. Determine if the requested memory access is allowed by the
+                // pte.r, pte.w, pte.x, and pte.u bits, given the current privilege mode and the value of the
+                // SUM and MXR fields of the mstatus register. If not, stop and raise a page-fault exception
+                // corresponding to the original access type.
+                
+                let set_bits = required_access as usize & !(pte.flags());
+                if set_bits & EntryBits::VALID != 0 {
+                    return Err(PageLookupError::NotReadable);
+                }  else if set_bits & EntryBits::READ != 0 {
+                    return Err(PageLookupError::NotReadable);
+                } else if set_bits & EntryBits::WRITE != 0 {
+                    return Err(PageLookupError::NotWriteable);
+                } else if set_bits & EntryBits::EXECUTE != 0 {
+                    return Err(PageLookupError::NotExecutable);
+                } else if set_bits & EntryBits::USER != 0 {
+                    return Err(PageLookupError::NoUserAccess);
+                }
+                
+                // Step 7 is not done here.
 
                 // 8. The translation is successful. The translated physical address is given as
                 // follows:
@@ -183,7 +220,6 @@ where
             if vpn_end < vpn_start {
                 vpn_end = 511;
             }
-
             for vpn_number in vpn_start..=vpn_end {
                 assert!(vpn_number < 512);
                 let mut entry = &mut table.entries[vpn_number];
@@ -287,6 +323,16 @@ where
         let mask = (1 << higher_bits) - 1;
         let mask = mask << (uppermost_significant_bit + 1);
         address & (!mask)
+    }
+    
+    
+    pub unsafe fn from_satp(satp: usize, phys_to_virt: fn(usize) -> usize, virt_to_phys: fn(usize) -> usize) -> Self {
+        let table = (phys_to_virt(satp << 12) as *mut Table<PTESIZE>).as_mut().unwrap();
+        Self {
+            table,
+            phys_to_virt,
+            virt_to_phys
+        }
     }
 }
 

@@ -106,7 +106,13 @@ s_trap_vector:
 	
 	# Get ready to go into Rust (trap.rs)
 	
+	csrr a0, sie
+	sx a0, XLEN*39(t5)
+	
+	csrr a0, satp
+	sx a0, XLEN*37(t5)
 	# Load the kernel page table which includes all kernel code including trap.rs
+	
 	lx a0, XLEN*38(t5)
 	csrw satp, a0
 	
@@ -135,6 +141,10 @@ s_trap_vector:
 	lx a0, XLEN*37(t5)
 	csrw satp, a0
 	
+	
+	lx a0, XLEN*39(t5)
+	csrw sie, a0
+	
 	restore_volatile_registers
 
 trap_exit:
@@ -144,26 +154,32 @@ trap_exit:
 .global switch_to_supervisor_frame	
 # a0: trap frame
 switch_to_supervisor_frame:
+	csrw sie, x0
 	// Load the trap frame
 	csrw sscratch, a0
 	// When SRET is executed, set PC to the old PC
 	lx t0, XLEN*32(a0)
 	csrw sepc, t0
 	
-	lx t0, XLEN*37(a0)
-	csrw satp, t0
-	
-	// If this process got interrupted, it means interrupts were enabled
-	li t0, 0x222
+	lx t0, XLEN*39(a0)
 	csrw sie, t0
 	
-	// Set SPP, which will make it so that when SRET is executed, we are in user mode
+	lx t0, XLEN*37(a0)
+	sfence.vma x0, x0
+	csrw satp, t0
+	sfence.vma x0, x0
+	
+	// Set SPP, which will make it so that when SRET is executed, we are in S mode
 	csrr t0, sstatus
 	li t1, (1 << 8)
 	or t0, t1, t0
 	csrw sstatus, t0
 	
 	restore_volatile_registers
+	
+.global switch_to_supervisor_frame_end
+switch_to_supervisor_frame_end:
+
 	sret
 
 .global switch_to_user_frame	
@@ -178,9 +194,6 @@ switch_to_user_frame:
 	csrw satp, t0
 	sfence.vma
 	
-	// If this process got interrupted, it means interrupts were enabled
-	li t0, 0x222
-	csrw sie, t0
 	
 	// Clear SPP, which will make it so that when SRET is executed, we are in user mode
 	csrr t0, sstatus
@@ -275,7 +288,6 @@ store_to_trap_frame_and_run_function:
 	lx ra, (sp)
 	addi sp, sp, 16
 	ret
-
 
 .global critical_code_end	
 critical_code_end:

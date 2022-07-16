@@ -22,6 +22,7 @@ kernel_syscall = { path = "../kernel_syscall" }
 sbi = "*"
 fdt = "*"
 static-box = "*"
+bitmask = { version = "0.5", default-features = false }
 
 [features]
 backtrace = []

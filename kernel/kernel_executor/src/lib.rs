@@ -18,7 +18,7 @@ pub fn run_neverending_future(mut future: impl Future<Output = !> + Unpin, idle:
     loop {
         // If the ready flag is true, we can poll it again
         // otherwise, wait a bit.
-        if ready_flag.swap(false, core::sync::atomic::Ordering::Relaxed) == true {
+        if ready_flag.swap(false, core::sync::atomic::Ordering::Relaxed) {
             let _ = Pin::new(&mut future).poll(&mut context);
         } else {
             idle()

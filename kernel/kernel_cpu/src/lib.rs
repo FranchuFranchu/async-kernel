@@ -205,7 +205,10 @@ pub fn wfi() {
 
 #[inline(always)]
 pub fn fence_vma() {
-    unsafe { asm!("sfence.vma zero, zero") };
+    unsafe { asm!("
+        sfence.vma zero, zero
+        fence rw, rw
+    ") };
 }
 
 #[inline]
@@ -213,6 +216,26 @@ pub fn in_interrupt_context() -> bool {
     // TODO make this sound (aliasing rules?)
     (read_sscratch() as usize == 0)
         || unsafe { read_sscratch().as_ref().unwrap().is_interrupt_context() }
+}
+
+pub struct SieGuard(usize);
+
+impl SieGuard {
+    pub fn new() -> Self {
+        let old = read_sie();
+        unsafe { write_sie(0); }
+        Self(old)
+    }
+}
+
+impl Drop for SieGuard {
+    fn drop(&mut self) {
+        unsafe { write_sie(self.0); }
+    }
+}
+
+pub fn sie_guard() -> SieGuard {
+    SieGuard::new()
 }
 
 #[inline]

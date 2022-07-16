@@ -2,11 +2,10 @@ use alloc::{
     boxed::Box,
     collections::VecDeque,
     rc::{Rc, Weak},
-    sync::Arc,
     vec::Vec,
 };
+use kernel_lock::shared_refcell::RefCell;
 use core::{
-    cell::RefCell,
     future::Future,
     pin::Pin,
     task::{Context, Poll, Waker},
@@ -62,7 +61,7 @@ impl LocalExecutorHandle {
 
 impl LocalExecutor {
     pub fn new() -> Rc<RefCell<Self>> {
-        let mut this = Rc::new(RefCell::new(Self::default()));
+        let this = Rc::new(RefCell::new(Self::default()));
         this.borrow_mut().this = Rc::downgrade(&this);
         this
     }
@@ -82,11 +81,11 @@ impl LocalExecutor {
             let waker = Rc::new(LocalWaker {
                 executor: Rc::downgrade(&self.wake_queue),
                 wakers: Rc::downgrade(&self.wakers),
-                index: index,
+                index,
             })
             .into_waker();
             let mut cx = Context::from_waker(&waker.waker);
-            if let Poll::Ready(_) = Pin::new(task.as_mut().unwrap()).poll(&mut cx) {
+            if Pin::new(task.as_mut().unwrap()).poll(&mut cx).is_ready() {
                 task.take();
             }
         }
@@ -97,10 +96,17 @@ impl LocalExecutor {
     }
 
     fn wake_pending(&mut self) -> bool {
-        let q: Vec<usize> = self.wake_queue.borrow_mut().drain(..).collect();
+        let q: VecDeque<usize> = core::mem::take(&mut *self.wake_queue.borrow_mut());
+        
+        // Remove duplicates
         let is_empty = q.is_empty();
-        for i in q {
-            self.poll_future(i);
+        let mut seen = Vec::with_capacity(q.capacity());
+        for i in q.iter() {
+            if seen.contains(i) {
+                continue;
+            }
+            seen.push(*i);
+            self.poll_future(*i);
         }
         is_empty
     }
@@ -115,9 +121,7 @@ impl LocalExecutor {
         let index = if let Some(slot) = self
             .tasks
             .iter_mut()
-            .enumerate()
-            .filter(|(_, val)| val.is_none())
-            .next()
+            .enumerate().find(|(_, val)| val.is_none())
         {
             slot.1.replace(task);
             slot.0
@@ -136,9 +140,9 @@ impl Future for LocalExecutor {
     fn poll(mut self: Pin<&mut Self>, context: &mut Context) -> Poll<()> {
         self.wakers.borrow_mut().push(context.waker().clone());
         if self.check_if_done() {
-            Poll::Pending
-        } else {
             Poll::Ready(())
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -146,13 +150,13 @@ impl Future for LocalExecutor {
 impl Future for LocalExecutorHandle {
     type Output = ();
 
-    fn poll(mut self: Pin<&mut Self>, context: &mut Context) -> Poll<()> {
+    fn poll(self: Pin<&mut Self>, context: &mut Context) -> Poll<()> {
         self.executor.borrow_mut().poll_all();
         for i in self.queue.borrow_mut().drain(..) {
             self.executor.borrow_mut().push_task(i);
         }
         let r = Pin::new(&mut *self.executor.borrow_mut()).poll(context);
-        if self.executor.borrow_mut().wake_pending() == false {
+        if !self.executor.borrow_mut().wake_pending() {
             for i in self.queue.borrow_mut().drain(..) {
                 self.executor.borrow_mut().push_task(i);
             }

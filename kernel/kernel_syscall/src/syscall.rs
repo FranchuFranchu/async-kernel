@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use kernel_cpu::Registers;
 use kernel_process::{Process, ProcessContainer, ProcessState};
 use num_enum::*;
@@ -10,30 +11,18 @@ pub enum SyscallNumbers {
     Unknown,
 }
 
-/// `process` is a process that just executed a system call
-/// either by setting SSIP or calling ECALL
-pub fn do_syscall(process: &mut Process) {
-    let mut arguments =
-        &mut process.trap_frame.general_registers[Registers::A0.idx()..=Registers::A7.idx()];
-
-    let syscall_number_value = arguments.last().unwrap();
-    let syscall_number = SyscallNumbers::from(*syscall_number_value);
-
-    match syscall_number {
-        Exit => {
-            process.state = ProcessState::Exited;
-        }
-        Unknown => {
-            println!("Unknown syscall {}", syscall_number_value);
-        }
-    }
+pub fn get_syscall_args(process: &mut Process) -> &mut [usize] {
+    &mut process.trap_frame.general_registers[Registers::A0.idx()..=Registers::A7.idx()]
 }
 
-pub fn do_syscall_and_drop_if_exit(process: ProcessContainer) -> Option<ProcessContainer> {
+pub fn do_syscall_and_drop_if_exit(process: ProcessContainer, syscall_fn: impl FnOnce(&mut Process)) -> Option<ProcessContainer> {
     let mut lock = process.lock();
-    do_syscall(&mut *lock);
-
-    match lock.state {
+    syscall_fn(&mut *lock);
+    
+    let lock_two = lock.wake_on_paused.lock();
+    let state = lock_two.state.clone();
+    drop(lock_two);
+    match state {
         ProcessState::Exited => None,
         _ => {
             drop(lock);

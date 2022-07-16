@@ -82,6 +82,17 @@ pub enum PageLookupError {
     Invalid,
     /// if pte.r = 0 and pte.w = 1,
     WriteOnly,
+    /// if pte.r = 0 and read access
+    NotReadable,
+    /// if pte.w = 0 and write access
+    NotWriteable,
+    /// if pte.x = 0 and execute access
+    NotExecutable,
+    /// if pte.u = 0 and user access
+    NoUserAccess,
+    /// if pte.rwx == 0 (non-leaf PTE) and pte.dau != 0
+    DAUReservedBitSet,
+    MisalignedSuperpage,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -196,6 +207,9 @@ impl Entry {
     pub fn address(&self) -> usize {
         (self.value & EntryBits::ADDRESS_MASK) << 2
     }
+    pub fn flags(&self) -> usize {
+        self.value & !EntryBits::ADDRESS_MASK
+    }
 }
 
 impl Debug for Entry {
@@ -223,6 +237,12 @@ impl Debug for Entry {
             }
             if self.value & USER != 0 {
                 f.write_char('U')?;
+            }
+            if self.value & ACCESSED != 0 {
+                f.write_char('A')?;
+            }
+            if self.value & DIRTY != 0 {
+                f.write_char('D')?;
             }
             f.write_char(' ')?;
             f.write_fmt(format_args!("{:x}", (self.value & ADDRESS_MASK) << 2))?;
@@ -254,7 +274,7 @@ where
 
     pub fn boxed_zeroed() -> Box<Self> {
         let mut table = Box::new_uninit();
-        table.as_bytes_mut().into_iter().map(|s| s.write(0));
+        table.as_bytes_mut().into_iter().for_each(|s| { s.write(0); });
         unsafe { table.assume_init() }
     }
 }

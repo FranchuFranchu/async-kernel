@@ -15,3 +15,4 @@ pub mod lock;
 pub mod shared;
 pub mod simple_shared;
 pub mod spin;
+pub mod shared_refcell;

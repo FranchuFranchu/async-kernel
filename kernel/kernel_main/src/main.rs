@@ -7,6 +7,7 @@
     const_fn_trait_bound,
     waker_getters,
     default_alloc_error_handler,
+    drain_filter,
     generic_arg_infer,
     naked_functions,
     asm_sym,
@@ -20,11 +21,15 @@ extern crate kernel_allocator;
 #[macro_use]
 extern crate kernel_printer;
 
-use alloc::{boxed::Box, collections::VecDeque, rc::Rc};
+use alloc::{boxed::Box, collections::{VecDeque, BTreeMap}, rc::Rc, vec::Vec};
+use fdt::Fdt;
+use kernel_chip_drivers::plic::Plic0;
+
+use kernel_syscall::do_syscall_and_drop_if_exit;
 use core::{
     cell::RefCell,
     ffi::c_void,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering}, task::{Waker},
 };
 
 use kernel_cpu::{
@@ -38,7 +43,7 @@ use kernel_util::boxed_slice_with_alignment_uninit;
 use local_notify::Notify;
 use sbi::SbiError;
 
-use crate::timer::set_relative_timer;
+use crate::{timer::set_relative_timer, trap_handler::handle_come_back_from_process, syscall::{wait_until_process_is_woken}};
 
 pub mod asm;
 pub mod local_notify;
@@ -47,6 +52,11 @@ pub mod std_macros;
 pub mod timer;
 pub mod trap_handler;
 pub mod wait_future;
+pub mod syscall;
+
+
+#[macro_use]
+extern crate bitmask;
 
 // Linker symbols
 extern "C" {
@@ -68,6 +78,11 @@ struct HartLocals {
     timer_happened_notify: Notify,
     timer_scheduled_notify: Notify,
     timer_queue: RefCell<VecDeque<(u64, Rc<Notify>)>>,
+    interrupt_notifiers: RefCell<BTreeMap<usize, Vec<Waker>>>,
+}
+
+fn loop_forever_black_box() {
+    unsafe { core::arch::asm!("j .") };
 }
 
 impl HartLocals {
@@ -97,9 +112,8 @@ pub unsafe fn boot() {
 }
 
 fn setup_hart_trap_frame(hartid: usize, hart_locals: HartLocals) -> Box<TrapFrame> {
-    let mut trap_frame = TrapFrame::zeroed();
+    let mut trap_frame = TrapFrame::zeroed_interrupt_context();
     trap_frame.hartid = hartid;
-    trap_frame.set_interrupt_context();
     trap_frame.hart_locals = Box::leak(Box::new(hart_locals)) as *mut _ as usize;
     Box::new(trap_frame)
 }
@@ -136,7 +150,7 @@ pub fn main(
     opaque: usize,
     sv_bits: usize,
     kernel_len: usize,
-    stack_start: usize,
+    _stack_start_virtual: usize,
     hart_entry_point: usize,
 ) -> ! {
     if SV_BITS.load(Ordering::Acquire) != 0 {
@@ -144,34 +158,52 @@ pub fn main(
 
         kernel_executor::run_neverending_future(
             alloc::boxed::Box::pin(setup_hart(hartid)),
-            kernel_cpu::wfi,
+            || {
+                todo!()
+            },
         )
     };
+    
 
     SV_BITS.store(sv_bits, Ordering::Release);
     GAP.store(0usize.wrapping_sub(1 << (sv_bits - 1)), Ordering::Release);
 
     unsafe { (0x1000_0000 as *mut u8).write_volatile(67) };
     unsafe { (0x1000_0000 as *mut u8).write_volatile(0xa) };
-
-    let start: usize = 0xffffffc08200_0000;
-    let end: usize = 0xffffffc08700_0000;
-    kernel_allocator::init_from_pointers(start as *const _, end as *const _);
-    println!("{:?}", "Reached kernel!");
-
-    unsafe {
+    
+    let kernel_phys = unsafe {
         let mut table = ((read_satp() << 12) as *mut Table<_>).as_mut().unwrap();
         let sv39 = Sv39 {
             table: &mut table,
             phys_to_virt,
             virt_to_phys,
         };
-        KERNEL_START_PHYSICAL.store(sv39.query(0xffffffff8000_0000).unwrap(), Ordering::Release);
-    }
+        sv39.query(0xffffffff8000_0000).unwrap()
+    };
+    KERNEL_START_PHYSICAL.store(kernel_phys, Ordering::Relaxed);
+    
+    
+    println!("{:x} {:x} {:x} {:x}", kernel_phys, GAP.load(Ordering::Relaxed), 4096, kernel_phys + GAP.load(Ordering::Relaxed));
+    
+     // kernel_phys + GAP.load(Ordering::Relaxed);
+     // Every time i've tried changing this, it's cursed.
+    let start: usize = 0xffffffc08300_0000;
+    assert!(start > kernel_phys + GAP.load(Ordering::Relaxed));
+    assert!(kernel_len < 0x50_0000);
+    let end: usize = 0xffffffc08700_0000;
+    
+    kernel_allocator::init_from_pointers(start as *const _, end as *const _);
+    
+    println!("{:?}", "Reached kernel!");
 
+
+    println!("{:x}", KERNEL_START_PHYSICAL.load(Ordering::Relaxed));
+    
     kernel_executor::run_neverending_future(
         alloc::boxed::Box::pin(async_main(hartid, opaque, hart_entry_point)),
-        kernel_cpu::wfi,
+        || {
+            todo!()
+        },
     )
 }
 
@@ -179,6 +211,7 @@ static mut GLOBAL_EXECUTOR: Option<SendExecutorHandle> = None;
 
 fn setup_hart_state_and_metadata(hartid: usize) {
     let local_executor = LocalExecutor::new();
+    println!("{:x}", s_trap_vector as usize);
     unsafe {
         write_stvec(s_trap_vector as usize);
         use kernel_cpu::csr::*;
@@ -190,9 +223,10 @@ fn setup_hart_state_and_metadata(hartid: usize) {
         hart_locals.executor = Some(handle);
         hart_locals.local_executor = Some(local_executor.borrow_mut().handle());
         let mut frame = setup_hart_trap_frame(hartid, hart_locals);
+        //loop_forever_black_box();
         frame.pid = 1;
 
-        let stack = boxed_slice_with_alignment_uninit::<u8>(4096, 4096);
+        let stack = boxed_slice_with_alignment_uninit::<u8>(4096*4, 4096);
         let stack_addr = stack.as_ptr_range().end as usize;
         Box::leak(stack);
 
@@ -206,12 +240,15 @@ fn setup_hart_state_and_metadata(hartid: usize) {
 
 use kernel_paging::{Sv39, Table};
 
-async fn async_main(hartid: usize, _opaque: usize, hart_entry_point: usize) -> ! {
+async fn async_main(hartid: usize, opaque: usize, hart_entry_point: usize) -> ! {
+    
     let executor = SendExecutor::new();
     unsafe { GLOBAL_EXECUTOR.replace(executor.lock().handle()) };
 
     setup_hart_state_and_metadata(hartid);
-
+    
+    println!("{:?}", read_sie());
+    
     // Spawn all harts
     for hart_id in 0.. {
         let stack = boxed_slice_with_alignment_uninit::<u8>(4096, 4096);
@@ -223,7 +260,7 @@ async fn async_main(hartid: usize, _opaque: usize, hart_entry_point: usize) -> !
             hart_entry_point,
             stack_addr as usize - GAP.load(Ordering::Relaxed),
         ) {
-            Ok(status) => {}
+            Ok(_status) => {}
             Err(SbiError::AlreadyAvailable) => {}
             Err(SbiError::InvalidParameter) => {
                 break;
@@ -235,60 +272,71 @@ async fn async_main(hartid: usize, _opaque: usize, hart_entry_point: usize) -> !
         Box::leak(stack);
     }
 
+    
+    println!("ISA: {}", unsafe { Fdt::from_ptr(opaque as _) }.unwrap().cpus().next().unwrap().property("riscv,isa").unwrap().as_str().unwrap());
+
     common_hart_code().await
 }
 
 async fn common_hart_code() -> ! {
+    // Create a page table for this hart.
     let mut table = kernel_paging::Table::boxed_zeroed();
     let mut sv39 = Sv39 {
         table: &mut *table,
         phys_to_virt,
         virt_to_phys,
     };
-
     let kernel_physical = KERNEL_START_PHYSICAL.load(Ordering::Relaxed);
     sv39.map(0, 1 << 38, 1 << 38, 0xf);
-    sv39.map(kernel_physical, KERNEL_START_VIRTUAL, 0x10_0000, 0xf);
+    sv39.map(kernel_physical, KERNEL_START_VIRTUAL, 0x50_0000, 0xf);
     unsafe { assert!(sv39.query(KERNEL_START_VIRTUAL + 0x1000).unwrap() != 0) };
     drop(sv39);
 
-    let mut addr: usize = &*table as *const _ as usize;
+    let addr: usize = &*table as *const _ as usize;
     assert!(addr & 4095 == 0);
     let mut satp: usize = virt_to_phys(addr) >> 12;
     satp |= 8 << 60;
 
     unsafe { write_satp(satp) }
+    
+    
+    // Create the PLIC instance
+    let plic = Plic0::new_with_addr(GAP.load(Ordering::Relaxed) + 0x0c00_0000);
+    
+    plic.set_threshold(0);
+    plic.set_enabled(10, true);
+    plic.set_priority(10, 3);
+    unsafe { (0x1000_0001 as *mut u8).add(GAP.load(Ordering::Relaxed)).write_volatile(1) }
 
     HartLocals::current()
         .local_executor
         .as_ref()
         .unwrap()
         .spawn(Box::new(Box::pin(async {
+            assert!(read_sie() == 0);
             fn test() {
+                
                 unsafe { write_sstatus(read_sstatus() | status::SIE) };
                 enable_interrupts();
 
-                for i in 0u64.. {
-                    i * i;
-                }
 
-                use kernel_cpu::{read_sip, write_sip};
-                unsafe { write_sip(read_sip() | kernel_cpu::csr::SSIP) }
+                
                 loop {}
             }
-            let process = Process::new_supervisor(
+            disable_interrupts();
+            let mut process = Process::new_supervisor(
                 |mut process| process.name = Some(alloc::string::String::from("hello world")),
                 test,
             );
 
             loop {
-                set_relative_timer(0x1_000_000);
-                static OUTPUT_LOCK: spin::Mutex<()> = spin::Mutex::new(());
-                {
-                    let l = OUTPUT_LOCK.lock();
-                    println!("{:?}", "Switch to process (all is going well)");
-                }
+                // Make sure the process is ready for waking up
+                wait_until_process_is_woken(&process).await;
+                set_relative_timer(0x0010_0000);
+                
                 process.lock().switch_to_and_come_back();
+                process = do_syscall_and_drop_if_exit(process, |p| handle_come_back_from_process(Some(p))).unwrap();
+                
             }
         })));
 
@@ -298,7 +346,7 @@ async fn common_hart_code() -> ! {
         .unwrap()
         .clone();
     handle.await;
-
+    
     loop {}
 }
 
@@ -366,5 +414,5 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
         message,
         info.location().unwrap()
     );
-    loop {}
+    loop {};
 }

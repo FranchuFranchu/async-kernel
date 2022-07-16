@@ -34,17 +34,11 @@ struct ThreadRwLocking<T>(RefCell<T>);
 
 impl<T> RwLocking<T> for ThreadRwLocking<T> {
     type ReadGuard<'this, Q>
-    where
-        Self: 'this,
-        T: 'this,
-        Q: 'this,
-    = Ref<'this, Q>;
+    
+    = Ref<'this, Q> where Self: 'this, T: 'this, Q: 'this;
     type WriteGuard<'this, Q>
-    where
-        Self: 'this,
-        T: 'this,
-        Q: 'this,
-    = RefMut<'this, Q>;
+    
+    = RefMut<'this, Q> where Self: 'this, T: 'this, Q: 'this;
 
     fn new(internal: T) -> Self {
         Self(RefCell::new(internal))

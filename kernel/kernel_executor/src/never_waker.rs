@@ -1,12 +1,10 @@
 //! A waker that can be used when you're certain that the future will never be
 //! Ready
 
-use alloc::boxed::Box;
+
 use core::{
-    future::Future,
-    pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
-    task::{Context, RawWaker, RawWakerVTable, Waker},
+    task::{RawWaker, RawWakerVTable, Waker},
 };
 
 struct WakerData(AtomicBool);
@@ -26,7 +24,7 @@ unsafe fn wake_by_ref(a: *const ()) {
         .unwrap()
         .store(true, Ordering::Release);
 }
-unsafe fn drop(a: *const ()) {}
+unsafe fn drop(_a: *const ()) {}
 
 const fn waker_vtable_null() -> RawWakerVTable {
     RawWakerVTable::new(waker_clone, wake, wake_by_ref, drop)
