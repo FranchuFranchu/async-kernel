@@ -5,21 +5,27 @@ extern "C" {
 use core::{sync::atomic::Ordering};
 
 use kernel_chip_drivers::plic::Plic0;
-use kernel_cpu::{csr::XCAUSE_DESCRIPTION, read_scause, read_sip, read_sscratch, write_sip, read_stval, read_sstatus};
+use kernel_cpu::{csr::{XCAUSE_DESCRIPTION, SSIE}, read_scause, read_sip, read_sscratch, write_sip, read_stval, read_sstatus, write_sie, read_sie};
 use kernel_paging::{Sv39, EntryBits};
 use kernel_trap_frame::TrapFrame;
 use kernel_process::Process;
 
 use crate::{GAP, HartLocals, phys_to_virt, virt_to_phys, syscall::handle_syscall, loop_forever_black_box};
 
-pub fn handle_interrupt(process: Option<&mut Process>, cause: usize) {
+pub fn handle_interrupt(mut process: Option<&mut Process>, cause: usize) {
     use kernel_cpu::csr::cause::*;
+    let cause = if process.is_none() { 
+        // If the process is None, we only care about making the interrupt nonpending
+        read_sip().log2() as usize
+    } else { 
+        cause as usize 
+    };
     match cause {
         SUPERVISOR_TIMER => {
             kernel_sbi::set_absolute_timer(u64::MAX);
         }
         SUPERVISOR_SOFTWARE => unsafe { 
-            handle_syscall(process.unwrap());
+            handle_syscall(process.as_mut().unwrap());
             write_sip(read_sip() & (!kernel_cpu::csr::SSIP)) 
         },
         SUPERVISOR_EXTERNAL => {
@@ -29,22 +35,26 @@ pub fn handle_interrupt(process: Option<&mut Process>, cause: usize) {
             
             if let Some(e) = HartLocals::current().interrupt_notifiers.borrow_mut().remove(&(id as usize)) {
                 for waker in e {
-                    println!("Wakers");
                     waker.wake();
                 }
             }
             
             if id == 10 {
                 let c = unsafe { ((0x1000_0000 as *const u8).add(GAP.load(Ordering::Relaxed))).read_volatile() };
-                println!("Char: {:?}", c as char);
+                println!("Char {:?}", c as char);
             }
             
-            plic.complete(id);
             
+            plic.complete(id);
         }
         _ => {
             println!("Unknown interrupt: {:?}", cause);
         }
+    };
+    if let Some(p) = process {
+        p.trap_frame.sie &= (!read_sip()) & 0x222;
+    } else {
+        unsafe { write_sie((!read_sip()) & 0x222) };
     }
 }
 
@@ -66,6 +76,7 @@ pub unsafe fn trap_handler() {
     
     
     let trap_frame = read_sscratch().as_mut().unwrap();
+    trap_frame.sie = 0;
     let mut switch_to_trap_frame = ((*read_sscratch()).restore_context as *const TrapFrame as *mut TrapFrame).as_mut();
     if let Some(e) = &mut switch_to_trap_frame {
         if is_interrupt {

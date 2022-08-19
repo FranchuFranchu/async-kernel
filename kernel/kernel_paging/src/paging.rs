@@ -90,7 +90,6 @@ where
 
         // Here, we're renaming A to table
         let mut table: &Table<PTESIZE> = self.table;
-        crate::println!("{:p}", self.table);
         let mut i = LEVELS - 1;
         loop {
             // 2. Let pte be the value of the PTE at address a+va.vpn[i]×PTESIZE. (For Sv32,
@@ -102,7 +101,6 @@ where
             // that are reserved for future standard use are set within pte,
             // stop and raise a page-fault exception corresponding
             // to the original access type.
-            crate::println!("{:?}", pte);
             if pte.value & EntryBits::VALID == 0 {
                 return Err(PageLookupError::Invalid);
             } else if pte.value & EntryBits::READ == 0 && pte.value & EntryBits::WRITE == 1 {
@@ -367,8 +365,6 @@ fn test() {
     unsafe {
         assert!(table2.query(0x1020_0000).unwrap() == 0x1020_0000);
     }
-    println!("{:x}", Sv32::maximum_noncanon_virtual_address());
-    println!("{:x}", get_vpn_offset(2, 4));
     unsafe {
         assert!(Sv32::maximum_noncanon_virtual_address() == 0xffffffff);
     }

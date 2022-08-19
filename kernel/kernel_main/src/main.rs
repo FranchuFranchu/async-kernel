@@ -9,6 +9,7 @@
     waker_getters,
     default_alloc_error_handler,
     drain_filter,
+    int_log,
     generic_arg_infer,
     naked_functions,
     asm_sym,
@@ -88,6 +89,7 @@ struct HartLocals {
     timer_scheduled_notify: Notify,
     timer_queue: RefCell<VecDeque<(u64, Rc<Notify>)>>,
     interrupt_notifiers: RefCell<BTreeMap<usize, Vec<Waker>>>,
+    unhandled_interrupts: RefCell<usize>,
 }
 
 fn loop_forever_black_box() {
@@ -220,9 +222,16 @@ fn idle_task() {
             kernel_cpu::wfi();
         }
     }
+    let hart_locals = HartLocals::current();
+    let mut unhandled = hart_locals.unhandled_interrupts.borrow_mut();
+    let prev_unhandled = *unhandled;
     if read_sip() != 0 {
         // There was an interrupt that went unhandled all the way here.
-        handle_come_back_from_process(None);
+        *unhandled += 1;
+        if *unhandled > 1 {
+            handle_come_back_from_process(None);
+            *unhandled = 0;
+        }
     }
     let process = Process::new_supervisor(
         |mut process| {
@@ -231,13 +240,14 @@ fn idle_task() {
         idle_task_fn,
     );
 
-    process.lock().switch_to_and_come_back();
+    if prev_unhandled == 0 {
+        process.lock().switch_to_and_come_back();
+    }
     assert!(in_interrupt_context() == true);
 }
 
 fn setup_hart_state_and_metadata(hartid: usize) {
     let local_executor = LocalExecutor::new();
-    println!("{:x}", s_trap_vector as usize);
     unsafe {
         write_stvec(s_trap_vector as usize);
         use kernel_cpu::csr::*;
@@ -273,7 +283,6 @@ async fn async_main(hartid: usize, opaque: usize, hart_entry_point: usize) -> ! 
 
     setup_hart_state_and_metadata(hartid);
     
-    println!("{:?}", read_sie());
     
     // Spawn all harts
     for hart_id in 0.. {
@@ -339,7 +348,6 @@ async fn common_hart_code() -> ! {
     drop(sv39);
 
     let addr: usize = &*table as *const _ as usize;
-    println!("SATP ADDR {:#x}", addr);
     assert!(addr & 4095 == 0);
     let mut satp: usize = virt_to_phys(addr) >> 12;
     satp |= 8 << 60;
@@ -364,15 +372,11 @@ async fn common_hart_code() -> ! {
         .spawn(Box::new(Box::pin(async {
             assert!(read_sie() == 0);
             fn test() {
-                disable_interrupts();
-                unsafe { write_sstatus(read_sstatus() | status::SIE) };
-                unsafe { write_sstatus(read_sstatus() | status::SPP) };
                 enable_interrupts();
                 
-                println!("{:?}", "will wait");
-                unsafe { do_supervisor_syscall_2(10, 10, 0) };
-                println!("{:?}", "syscall stop");
-                
+                loop {
+                    unsafe { do_supervisor_syscall_2(10, 10, 0) };
+                }
                 loop {}
             }
             disable_interrupts();
@@ -385,7 +389,8 @@ async fn common_hart_code() -> ! {
                 // Make sure the process is ready for waking up
                 wait_until_process_is_woken(&process).await;
                 set_relative_timer(0x0010_0000);
-                
+                process = do_syscall_and_drop_if_exit(process, |p| handle_come_back_from_process(Some(p))).unwrap();
+                process.lock().trap_frame.sie = 0x222;
                 process.lock().switch_to_and_come_back();
                 process = do_syscall_and_drop_if_exit(process, |p| handle_come_back_from_process(Some(p))).unwrap();
                 
@@ -407,6 +412,7 @@ fn test_fn() {}
 
 #[no_mangle]
 fn syscall_on_interrupt_disabled() {
+    println!("{:?}", "interrupt disbled! cant syscall.");
     loop {}
 }
 

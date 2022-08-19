@@ -152,9 +152,6 @@ s_trap_vector:
 	lx a0, XLEN*39(t5)
 	csrw sie, a0
 	
-	li t0, 0x10000000
-	li t1, 65
-	sb t1, (t0)
 	
 	restore_volatile_registers
 
