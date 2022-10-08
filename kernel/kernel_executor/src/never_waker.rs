@@ -1,7 +1,6 @@
 //! A waker that can be used when you're certain that the future will never be
 //! Ready
 
-
 use core::{
     sync::atomic::{AtomicBool, Ordering},
     task::{RawWaker, RawWakerVTable, Waker},

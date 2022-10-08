@@ -114,7 +114,8 @@ impl SendExecutor {
         let index = if let Some(slot) = self
             .tasks
             .iter_mut()
-            .enumerate().find(|(_, val)| val.is_none())
+            .enumerate()
+            .find(|(_, val)| val.is_none())
         {
             slot.1.replace(task);
             slot.0

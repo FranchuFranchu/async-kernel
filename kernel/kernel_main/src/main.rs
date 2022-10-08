@@ -4,6 +4,7 @@
     never_type,
     const_fn_fn_ptr_basics,
     panic_info_message,
+    bench_black_box,
     const_fn_trait_bound,
     strict_provenance,
     waker_getters,
@@ -12,6 +13,7 @@
     int_log,
     generic_arg_infer,
     naked_functions,
+    const_btree_new,
     asm_sym,
     asm_const
 )]
@@ -23,39 +25,50 @@ extern crate kernel_allocator;
 #[macro_use]
 extern crate kernel_printer;
 
-use alloc::{boxed::Box, collections::{VecDeque, BTreeMap}, rc::Rc, vec::Vec};
-use fdt::Fdt;
-use kernel_chip_drivers::plic::Plic0;
-
-use kernel_syscall::do_syscall_and_drop_if_exit;
+use alloc::{
+    boxed::Box,
+    collections::{BTreeMap, VecDeque},
+    rc::Rc,
+    vec::Vec,
+};
 use core::{
     cell::RefCell,
     ffi::c_void,
-    sync::atomic::{AtomicUsize, Ordering}, task::{Waker},
+    hint::black_box,
+    sync::atomic::{AtomicUsize, Ordering},
+    task::Waker,
 };
 
+use fdt::Fdt;
+use kernel_chip_drivers::plic::Plic0;
 use kernel_cpu::{
-    csr::status, read_satp, read_sie, read_sscratch, read_sstatus, write_satp, write_sie,
-    write_sscratch, write_sstatus, write_stvec, in_interrupt_context, read_sip,
+    csr::{
+        status::{SIE},
+        PagingMode,
+    },
+    in_interrupt_context, read_satp, read_sie, read_sip, read_sscratch, read_sstatus, read_time,
+    write_satp, write_sie, write_sscratch, write_sstatus, write_stvec, read_satp_flags,
 };
 use kernel_executor::{LocalExecutor, SendExecutor, SendExecutorHandle};
+use kernel_paging::Paging;
 use kernel_process::Process;
+use kernel_syscall::do_syscall_and_drop_if_exit;
 use kernel_trap_frame::TrapFrame;
-use kernel_util::boxed_slice_with_alignment_uninit;
-use local_notify::Notify;
+use kernel_util::{boxed_slice_with_alignment_uninit, boxed_slice_with_alignment};
 use sbi::SbiError;
 
-use crate::{timer::set_relative_timer, trap_handler::handle_come_back_from_process, syscall::{wait_until_process_is_woken}, asm::do_supervisor_syscall_2};
+use crate::{
+    asm::{do_supervisor_syscall_2, do_supervisor_syscall_0, do_supervisor_syscall_1}, syscall::wait_until_process_is_woken, timer::set_relative_timer,
+    trap_handler::handle_come_back_from_process,
+};
 
 pub mod asm;
-pub mod local_notify;
 pub mod never_waker;
 pub mod std_macros;
+pub mod syscall;
 pub mod timer;
 pub mod trap_handler;
 pub mod wait_future;
-pub mod syscall;
-
 
 #[macro_use]
 extern crate bitmask;
@@ -75,7 +88,7 @@ extern "C" {
     static _readwrite_start: c_void;
     static _readwrite_end: c_void;
     static _stack_heap_start: c_void;
-    
+
     fn s_trap_vector();
     fn new_hart();
 }
@@ -84,10 +97,6 @@ extern "C" {
 struct HartLocals {
     local_executor: Option<kernel_executor::LocalExecutorHandle>,
     executor: Option<kernel_executor::SendExecutorHandle>,
-    trap_notify: Notify,
-    timer_happened_notify: Notify,
-    timer_scheduled_notify: Notify,
-    timer_queue: RefCell<VecDeque<(u64, Rc<Notify>)>>,
     interrupt_notifiers: RefCell<BTreeMap<usize, Vec<Waker>>>,
     unhandled_interrupts: RefCell<usize>,
 }
@@ -113,6 +122,11 @@ fn enable_interrupts() {
 
 fn disable_interrupts() {
     unsafe { write_sie(0) };
+}
+
+pub fn busy_wait_for(time: u64) {
+    let s_time = read_time();
+    while read_time() < (time + s_time) {}
 }
 
 #[link_section = ".text.init"]
@@ -164,6 +178,7 @@ pub fn main(
     _stack_start_virtual: usize,
     hart_entry_point: usize,
 ) -> ! {
+    black_box(&debug_test_fn());
     if SV_BITS.load(Ordering::Acquire) != 0 {
         // This is not the main hart. Go to the hart entry code
 
@@ -172,14 +187,13 @@ pub fn main(
             idle_task,
         )
     };
-    
 
     SV_BITS.store(sv_bits, Ordering::Release);
     GAP.store(0usize.wrapping_sub(1 << (sv_bits - 1)), Ordering::Release);
 
     unsafe { (0x1000_0000 as *mut u8).write_volatile(67) };
     unsafe { (0x1000_0000 as *mut u8).write_volatile(0xa) };
-    
+
     let kernel_phys = unsafe {
         let mut table = ((read_satp() << 12) as *mut Table<_>).as_mut().unwrap();
         let sv39 = Sv39 {
@@ -190,24 +204,28 @@ pub fn main(
         sv39.query(0xffffffff8000_0000).unwrap()
     };
     KERNEL_START_PHYSICAL.store(kernel_phys, Ordering::Relaxed);
-    
-    
-    println!("{:x} {:x} {:x} {:x}", kernel_phys, GAP.load(Ordering::Relaxed), 4096, kernel_phys + GAP.load(Ordering::Relaxed));
-    
-     // kernel_phys + GAP.load(Ordering::Relaxed);
-     // Every time i've tried changing this, it's cursed.
+
+    println!(
+        "{:x} {:x} {:x} {:x}",
+        kernel_phys,
+        GAP.load(Ordering::Relaxed),
+        4096,
+        kernel_phys + GAP.load(Ordering::Relaxed)
+    );
+
+    // kernel_phys + GAP.load(Ordering::Relaxed);
+    // Every time i've tried changing this, it's cursed.
     let start: usize = 0xffffffc08300_0000;
     assert!(start > kernel_phys + GAP.load(Ordering::Relaxed));
     assert!(kernel_len < 0x50_0000);
     let end: usize = 0xffffffc08700_0000;
-    
+
     kernel_allocator::init_from_pointers(start as *const _, end as *const _);
-    
+
     println!("{:?}", "Reached kernel!");
 
-
     println!("{:x}", KERNEL_START_PHYSICAL.load(Ordering::Relaxed));
-    
+
     kernel_executor::run_neverending_future(
         alloc::boxed::Box::pin(async_main(hartid, opaque, hart_entry_point)),
         idle_task,
@@ -238,12 +256,16 @@ fn idle_task() {
             process.name = Some(alloc::string::String::from("Idle task"));
         },
         idle_task_fn,
+        phys_to_virt,
+        virt_to_phys
     );
 
     if prev_unhandled == 0 {
+        set_relative_timer(0x0100_0000);
+        //println!("{:?}", "IDLE --------------");
         process.lock().switch_to_and_come_back();
     }
-    assert!(in_interrupt_context() == true);
+    assert!(in_interrupt_context());
 }
 
 fn setup_hart_state_and_metadata(hartid: usize) {
@@ -274,16 +296,14 @@ fn setup_hart_state_and_metadata(hartid: usize) {
     }
 }
 
-use kernel_paging::{Sv39, Table, EntryBits};
+use kernel_paging::{EntryBits, Sv39, Table};
 
 async fn async_main(hartid: usize, opaque: usize, hart_entry_point: usize) -> ! {
-    
     let executor = SendExecutor::new();
     unsafe { GLOBAL_EXECUTOR.replace(executor.lock().handle()) };
 
     setup_hart_state_and_metadata(hartid);
-    
-    
+
     // Spawn all harts
     for hart_id in 0.. {
         let stack = boxed_slice_with_alignment_uninit::<u8>(4096, 4096);
@@ -307,8 +327,18 @@ async fn async_main(hartid: usize, opaque: usize, hart_entry_point: usize) -> ! 
         Box::leak(stack);
     }
 
-    
-    println!("ISA: {}", unsafe { Fdt::from_ptr(opaque as _) }.unwrap().cpus().next().unwrap().property("riscv,isa").unwrap().as_str().unwrap());
+    println!(
+        "ISA: {}",
+        unsafe { Fdt::from_ptr(opaque as _) }
+            .unwrap()
+            .cpus()
+            .next()
+            .unwrap()
+            .property("riscv,isa")
+            .unwrap()
+            .as_str()
+            .unwrap()
+    );
 
     common_hart_code().await
 }
@@ -316,6 +346,7 @@ async fn async_main(hartid: usize, opaque: usize, hart_entry_point: usize) -> ! 
 #[no_mangle]
 fn debug_test_fn() {
     println!("{:#x}", read_sstatus());
+    println!("{:#x}", read_sstatus() & SIE);
 }
 
 async fn common_hart_code() -> ! {
@@ -327,24 +358,62 @@ async fn common_hart_code() -> ! {
         virt_to_phys,
     };
     let kernel_physical = KERNEL_START_PHYSICAL.load(Ordering::Relaxed);
-    sv39.map(0, 1 << 38, 1 << 38, EntryBits::VALID | EntryBits::READ | EntryBits::WRITE);
+    sv39.map(
+        0,
+        1 << 38,
+        1 << 38,
+        EntryBits::VALID | EntryBits::READ | EntryBits::WRITE,
+    );
     // Map executable area
     // Turns a kernel virtual address into a physical one
     let kernel_virt_to_phys = |addr| {
-        kernel_physical.wrapping_add(addr).wrapping_sub(KERNEL_START_VIRTUAL)
+        kernel_physical
+            .wrapping_add(addr)
+            .wrapping_sub(KERNEL_START_VIRTUAL)
     };
     let text_start = unsafe { core::ptr::addr_of!(_execute_start).addr() };
-    let text_size = unsafe { core::ptr::addr_of!(_execute_end).addr() - core::ptr::addr_of!(_execute_start).addr() };
+    let text_size = unsafe {
+        core::ptr::addr_of!(_execute_end).addr() - core::ptr::addr_of!(_execute_start).addr()
+    };
     let ro_start = unsafe { core::ptr::addr_of!(_readonly_start).addr() };
-    let ro_size = unsafe { core::ptr::addr_of!(_readonly_end).addr() - core::ptr::addr_of!(_readonly_start).addr() };
+    let ro_size = unsafe {
+        core::ptr::addr_of!(_readonly_end).addr() - core::ptr::addr_of!(_readonly_start).addr()
+    };
     let rw_start = unsafe { core::ptr::addr_of!(_readwrite_start).addr() };
-    let rw_size = unsafe { core::ptr::addr_of!(_readwrite_end).addr() - core::ptr::addr_of!(_readwrite_start).addr() };
+    let rw_size = unsafe {
+        core::ptr::addr_of!(_readwrite_end).addr() - core::ptr::addr_of!(_readwrite_start).addr()
+    };
     let rest_start = unsafe { core::ptr::addr_of!(_stack_heap_start).addr() };
-    sv39.map(kernel_virt_to_phys(text_start), text_start, text_size, EntryBits::VALID | EntryBits::READ | EntryBits::EXECUTE);
-    sv39.map(kernel_virt_to_phys(ro_start), ro_start, ro_size, EntryBits::VALID | EntryBits::READ);
-    sv39.map(kernel_virt_to_phys(rw_start), rw_start, rw_size, EntryBits::VALID | EntryBits::READ | EntryBits::WRITE);
-    sv39.map(kernel_virt_to_phys(rest_start), rest_start, 0x50_000, EntryBits::VALID | EntryBits::READ | EntryBits::WRITE);
+    sv39.map(
+        kernel_virt_to_phys(text_start),
+        text_start,
+        text_size,
+        EntryBits::VALID | EntryBits::READ | EntryBits::EXECUTE,
+    );
+    sv39.map(
+        kernel_virt_to_phys(ro_start),
+        ro_start,
+        ro_size,
+        EntryBits::VALID | EntryBits::READ,
+    );
+    sv39.map(
+        kernel_virt_to_phys(rw_start),
+        rw_start,
+        rw_size,
+        EntryBits::VALID | EntryBits::READ | EntryBits::WRITE,
+    );
+    sv39.map(
+        kernel_virt_to_phys(rest_start),
+        rest_start,
+        0x0005_0000,
+        EntryBits::VALID | EntryBits::READ | EntryBits::WRITE,
+    );
     unsafe { assert!(sv39.query(KERNEL_START_VIRTUAL + 0x1000).unwrap() != 0) };
+
+    unsafe {
+        let w = sv39.copy_partial_mapping(KERNEL_START_VIRTUAL, 0x1000000);
+        println!("{:?}", w)
+    }
     drop(sv39);
 
     let addr: usize = &*table as *const _ as usize;
@@ -355,15 +424,20 @@ async fn common_hart_code() -> ! {
     unsafe { write_satp(satp) }
     unsafe { (*read_sscratch()).satp = satp }
     unsafe { (*read_sscratch()).kernel_satp = satp }
-    
-    
+
     // Create the PLIC instance
     let plic = Plic0::new_with_addr(GAP.load(Ordering::Relaxed) + 0x0c00_0000);
-    
+
     plic.set_threshold(0);
     plic.set_enabled(10, true);
     plic.set_priority(10, 3);
-    unsafe { (0x1000_0001 as *mut u8).add(GAP.load(Ordering::Relaxed)).write_volatile(1) }
+    unsafe {
+        (0x1000_0001 as *mut u8)
+            .add(GAP.load(Ordering::Relaxed))
+            .write_volatile(1)
+    }
+
+    println!("{:?}", "ready plic");
 
     HartLocals::current()
         .local_executor
@@ -374,26 +448,84 @@ async fn common_hart_code() -> ! {
             fn test() {
                 enable_interrupts();
                 
-                loop {
-                    unsafe { do_supervisor_syscall_2(10, 10, 0) };
+                unsafe {
+                    let array = [10u8, 3u8, 4u8];
+                    let ptr = &array;
+                    
+                    crate::asm::do_supervisor_syscall_3(0x13, ptr.as_ptr() as usize, ptr.len() as usize, 1);
                 }
+                
+                let mut string = alloc::string::String::new();
+                let slice: Box<[core::mem::MaybeUninit<u8>]> = boxed_slice_with_alignment_uninit(4096, 4096);
+                unsafe {
+                    crate::asm::do_supervisor_syscall_3(0x20, slice.as_ptr() as _, 4096, 1);
+                    unsafe {
+                        let q = core::slice::from_raw_parts(slice.as_ptr() as *const u8, 4096);
+                        println!("{:?}", q);
+                    }
+                }
+                loop {
+                    let id = unsafe { do_supervisor_syscall_2(10, 10, 0) };
+                    unsafe { do_supervisor_syscall_1(2, id.0) };
+                    do_supervisor_syscall_0(3);
+                    
+                    let c = unsafe {
+                        ((0x1000_0000 as *const u8).add(GAP.load(Ordering::Relaxed)))
+                            .read_volatile()
+                    } as char;
+
+                    let c = if c == '\r' { '\n' } else { c };
+                    if c == 0x7f as char {
+                        // 0x7f == delete
+                        // 0x08 == backspace (go back 1 column)
+                        if !string.is_empty() {
+                            print!("\x08 \x08");
+                            string.pop();
+                        }
+                    } else {
+                        string.push(c);
+                        print!("{}", c);
+                    }
+
+                    if c == '\n' {
+                        print!("You typed: {}", string);
+                        string.clear();
+                    }
+                    //println!("Char {}", c);
+                }
+                unreachable!();
                 loop {}
             }
             disable_interrupts();
             let mut process = Process::new_supervisor(
-                |mut process| process.name = Some(alloc::string::String::from("hello world")),
+                |mut process| {
+                    process.name = Some(alloc::string::String::from("hello world"));
+                    unsafe {
+                        let table = kernel_paging::Table::<8>::from_satp(process.trap_frame.satp, phys_to_virt).as_ref().unwrap().clone();
+                        let table = table.clone_with(phys_to_virt, virt_to_phys);
+                        process.trap_frame.satp = table.to_satp_base_addr(virt_to_phys) | read_satp_flags();
+                        println!("{:x}", process.trap_frame.satp);
+                        process.page_table = Some(alloc::sync::Arc::new(table));
+                    };
+                },
                 test,
+                phys_to_virt,
+                virt_to_phys,
             );
+            //process.lock().trap_frame.satp = q;
 
             loop {
                 // Make sure the process is ready for waking up
                 wait_until_process_is_woken(&process).await;
-                set_relative_timer(0x0010_0000);
-                process = do_syscall_and_drop_if_exit(process, |p| handle_come_back_from_process(Some(p))).unwrap();
-                process.lock().trap_frame.sie = 0x222;
+                set_relative_timer(0x10010_0000);
+                // This has the SIE bit disabled because
+                // the interrupt will get triggered in the idle task.
+                process.lock().trap_frame.sie = (!read_sip()) & 0x022;
                 process.lock().switch_to_and_come_back();
-                process = do_syscall_and_drop_if_exit(process, |p| handle_come_back_from_process(Some(p))).unwrap();
-                
+                process = do_syscall_and_drop_if_exit(process, |p| {
+                    handle_come_back_from_process(Some(p))
+                })
+                .unwrap();
             }
         })));
 
@@ -403,8 +535,31 @@ async fn common_hart_code() -> ! {
         .unwrap()
         .clone();
     handle.await;
-    
+
     loop {}
+}
+
+pub unsafe fn paging_from_satp(satp: usize) -> Box<dyn Paging> {
+    match PagingMode::from_satp(satp) {
+        PagingMode::Bare => {
+            panic!("{:?}", "Running without paging!");
+        }
+        PagingMode::Sv32 => Box::new(kernel_paging::Sv32::from_satp(
+            satp,
+            phys_to_virt,
+            virt_to_phys,
+        )),
+        PagingMode::Sv39 => Box::new(kernel_paging::Sv39::from_satp(
+            satp,
+            phys_to_virt,
+            virt_to_phys,
+        )),
+        PagingMode::Sv48 => Box::new(kernel_paging::Sv48::from_satp(
+            satp,
+            phys_to_virt,
+            virt_to_phys,
+        )),
+    }
 }
 
 #[no_mangle]
@@ -472,5 +627,5 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
         message,
         info.location().unwrap()
     );
-    loop {};
+    loop {}
 }

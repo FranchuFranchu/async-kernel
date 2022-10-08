@@ -1,4 +1,7 @@
-use core::{cell::UnsafeCell, ops::{Deref, DerefMut}};
+use core::{
+    cell::UnsafeCell,
+    ops::{Deref, DerefMut},
+};
 
 use crate::shared::{lock_and_disable_interrupts, unlock_and_enable_interrupts_if_necessary};
 
@@ -14,7 +17,7 @@ impl<'mutex, T> Drop for BorrowMut<'mutex, T> {
 
 impl<'mutex, T> Deref for BorrowMut<'mutex, T> {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         unsafe { self.mutex.value.get().as_ref().unwrap() }
     }
@@ -40,6 +43,7 @@ impl RawRefCell {
         }
         unsafe { ptr.write(true) };
     }
+
     fn unlock(&self) {
         let mut ptr = self.locked.get();
         unsafe { ptr.write(false) };
@@ -60,10 +64,9 @@ impl<T> RefCell<T> {
             value: UnsafeCell::new(value),
         }
     }
+
     pub fn borrow_mut(&self) -> BorrowMut<T> {
         self.lock.lock();
-        BorrowMut {
-            mutex: self,
-        }
+        BorrowMut { mutex: self }
     }
 }

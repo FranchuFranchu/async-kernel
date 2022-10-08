@@ -18,6 +18,7 @@ kernel_sbi = { path = "../kernel_sbi" }
 kernel_send_generic = { path = "../kernel_send_generic" }
 kernel_util = { path = "../kernel_util" }
 kernel_chip_drivers = { path = "../kernel_chip_drivers" }
+kernel_resource_map = { path = "../kernel_resource_map" }
 kernel_syscall = { path = "../kernel_syscall" }
 sbi = "*"
 fdt = "*"

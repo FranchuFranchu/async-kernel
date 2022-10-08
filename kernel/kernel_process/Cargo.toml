@@ -10,3 +10,5 @@ kernel_lock = { path = "../kernel_lock" }
 kernel_cpu = { path = "../kernel_cpu" }
 kernel_trap_frame = { path = "../kernel_trap_frame" }
 kernel_util = { path = "../kernel_util" }
+kernel_resource_map = { path = "../kernel_resource_map" }
+kernel_paging = { path = "../kernel_paging" }

@@ -13,6 +13,6 @@ pub mod future;
 pub mod interrupt;
 pub mod lock;
 pub mod shared;
+pub mod shared_refcell;
 pub mod simple_shared;
 pub mod spin;
-pub mod shared_refcell;

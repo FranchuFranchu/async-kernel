@@ -2,9 +2,14 @@
 #![no_std]
 #![no_main]
 #![feature(bench_black_box, default_alloc_error_handler, naked_functions)]
-use core::{ffi::c_void, sync::atomic::AtomicBool, ops::{BitAnd, Add}};
+use core::{
+    ffi::c_void,
+    ops::{Add, BitAnd},
+    sync::atomic::AtomicBool,
+};
 
-use kernel_cpu::{write_stvec, write_satp, fence_vma};
+use kernel_cpu::{fence_vma, write_satp, write_stvec};
+use kernel_paging::Paging;
 core::arch::global_asm!(include_str!("../boot.S"));
 
 // Linker symbols
@@ -21,12 +26,15 @@ extern "C" {
 
 #[naked]
 unsafe extern "C" fn s_trap_vector() {
-    core::arch::asm!("
+    core::arch::asm!(
+        "
         nop
         nop
         la sp, _stack_start
         j trap_handler
-    ", options(noreturn) );
+    ",
+        options(noreturn)
+    );
 }
 
 #[no_mangle]
@@ -100,7 +108,7 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
         println!("{:?}", "Already booted!");
         loop {}
     }
-    
+
     unsafe { write_stvec((s_trap_vector as usize).bitand(!3).add(4)) };
 
     // TODO: Determine the paging scheme that will be used
@@ -157,7 +165,6 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
         ((ALIGNED_BYTES.len()) / 4096 + 1) * 4096,
         0xf,
     );
-    
 
     unsafe {
         let main = core::mem::transmute::<

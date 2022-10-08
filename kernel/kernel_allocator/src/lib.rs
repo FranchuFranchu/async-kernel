@@ -1,5 +1,4 @@
 #![no_std]
-
 #![feature(int_roundings)]
 
 use core::alloc::GlobalAlloc;
@@ -29,10 +28,10 @@ pub fn init_from_pointers(start: *const (), end: *const ()) {
     // Initialize memory allocation
     let heap_end = end as usize;
     let mut heap_start = start as usize;
-    
+
     heap_start = heap_start.div_ceil(slab_allocator_rs::MIN_HEAP_SIZE);
     heap_start *= slab_allocator_rs::MIN_HEAP_SIZE;
-    
+
     let mut heap_size: usize = heap_end - heap_start;
 
     // Align the size to min heap size boundaries

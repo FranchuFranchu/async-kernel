@@ -205,10 +205,14 @@ pub fn wfi() {
 
 #[inline(always)]
 pub fn fence_vma() {
-    unsafe { asm!("
+    unsafe {
+        asm!(
+            "
         sfence.vma zero, zero
         fence rw, rw
-    ") };
+    "
+        )
+    };
 }
 
 #[inline]
@@ -223,14 +227,18 @@ pub struct SieGuard(usize);
 impl SieGuard {
     pub fn new() -> Self {
         let old = read_sie();
-        unsafe { write_sie(0); }
+        unsafe {
+            write_sie(0);
+        }
         Self(old)
     }
 }
 
 impl Drop for SieGuard {
     fn drop(&mut self) {
-        unsafe { write_sie(self.0); }
+        unsafe {
+            write_sie(self.0);
+        }
     }
 }
 
@@ -249,15 +257,26 @@ pub fn clear_interrupt_context() {
 }
 
 #[inline]
-pub fn is_paging_enabled() -> bool {
+pub fn read_satp_flags() -> usize {
     #[cfg(target_arch = "riscv32")]
     {
-        ((read_satp() as u32) & (0x3 << 30)) != 0
+        return ((read_satp()) & (0x3 << 30));
     }
     #[cfg(target_arch = "riscv64")]
     {
-        ((read_satp() as u64) & (0xF << 62)) != 0
+        return ((read_satp()) & (0xF << 62));
     }
+    unreachable!();
+}
+
+#[inline]
+pub fn read_satp_table_addr() -> usize {
+    read_satp() << 12
+}
+
+#[inline]
+pub fn is_paging_enabled() -> bool {
+    read_satp_flags() != 0
 }
 
 pub fn get_xcause_explanation(cause: usize) -> &'static str {
@@ -332,6 +351,32 @@ pub mod csr {
     pub const SATP_SV39: usize = 8 << 60;
     #[cfg(target_arch = "riscv64")]
     pub const SATP_SV48: usize = 9 << 60;
+
+    pub enum PagingMode {
+        Bare,
+        Sv32,
+        Sv39,
+        Sv48,
+    }
+
+    impl PagingMode {
+        pub fn from_satp(satp: usize) -> PagingMode {
+            let mode_bitfield = if cfg!(target_arch = "riscv32") {
+                (satp >> 30) & 0b11
+            } else if cfg!(target_arch = "riscv64") {
+                (satp >> 60) & 0b1111
+            } else {
+                unreachable!("Not RV32 or RV64!");
+            };
+            match mode_bitfield {
+                0 => Self::Bare,
+                1 => Self::Sv32,
+                8 => Self::Sv39,
+                9 => Self::Sv48,
+                _ => todo!(),
+            }
+        }
+    }
 
     pub const XCAUSE_DESCRIPTION: [&str; 16] = [
         "Instruction address misaligned",

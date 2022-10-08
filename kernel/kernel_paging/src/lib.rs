@@ -95,7 +95,7 @@ pub enum PageLookupError {
     MisalignedSuperpage,
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Eq, PartialEq)]
 pub struct Entry {
     pub value: usize,
 }
@@ -197,6 +197,8 @@ impl Entry {
             current_address += increment >> 2;
         }
         self.value = 1 | (virt_to_phys(&*table as *const Table<PTESIZE> as usize) >> 2);
+        
+        // TODO somehow store this somewhere instead of leaking it.
         Box::leak(table);
 
         debug_assert!(!self.is_leaf());
@@ -207,8 +209,24 @@ impl Entry {
     pub fn address(&self) -> usize {
         (self.value & EntryBits::ADDRESS_MASK) << 2
     }
+
     pub fn flags(&self) -> usize {
         self.value & !EntryBits::ADDRESS_MASK
+    }
+    
+    pub fn from_phys_addr_and_flags(phys: usize, flags: usize) -> Self {
+        Entry { value: phys >> 2 | flags }
+    }
+    
+    pub unsafe fn deep_clone<const PTESIZE: usize>(&self, phys_to_virt: fn(usize) -> usize, virt_to_phys: fn(usize) -> usize) -> Self  where [(); 4096 / PTESIZE]: Sized {
+        if let Some(table) = self.try_as_table::<PTESIZE>(phys_to_virt) {
+            let table = Box::new(table.clone_with(phys_to_virt, virt_to_phys));
+            let addr = Box::into_raw(table) as usize;
+            let addr = virt_to_phys(addr);
+            Self::from_phys_addr_and_flags(addr, 1)
+        } else {
+            *self
+        }
     }
 }
 
@@ -252,9 +270,16 @@ impl Debug for Entry {
     }
 }
 
+#[cfg(target_arch = "riscv32")]
+pub const ARCH_PTESIZE: usize = 4;
+#[cfg(target_arch = "riscv64")]
+pub const ARCH_PTESIZE: usize = 8;
+
+pub type ArchTable = Table<{ ARCH_PTESIZE }>;
+
 #[repr(C)]
 #[repr(align(4096))]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Table<const PTESIZE: usize>
 where
     [(); 4096 / PTESIZE]: Sized,
@@ -274,8 +299,38 @@ where
 
     pub fn boxed_zeroed() -> Box<Self> {
         let mut table = Box::new_uninit();
-        table.as_bytes_mut().into_iter().for_each(|s| { s.write(0); });
+        table.as_bytes_mut().into_iter().for_each(|s| {
+            s.write(0);
+        });
         unsafe { table.assume_init() }
+    }
+    
+    pub fn from_satp(
+        satp: usize,
+        phys_to_virt: fn(usize) -> usize,
+    ) -> *const Table<PTESIZE> {
+        phys_to_virt(satp << 12) as *const Table<PTESIZE>
+    }
+    pub fn to_satp_base_addr(
+        &self,
+        virt_to_phys: fn(usize) -> usize,
+    ) -> usize {
+        virt_to_phys(self.entries.as_ptr() as usize) >> 12
+    }
+    
+    pub unsafe fn clone_with(
+        &self,
+        phys_to_virt: fn(usize) -> usize,
+        virt_to_phys: fn(usize) -> usize,
+    ) -> Self {
+        // Dumb shallow clone
+        let mut new_entries = self.entries.clone();
+        
+        for i in new_entries.iter_mut() {
+            *i = i.deep_clone::<PTESIZE>(phys_to_virt, virt_to_phys);
+        }
+        
+        Table { entries: new_entries }
     }
 }
 

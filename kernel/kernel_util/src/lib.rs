@@ -7,6 +7,7 @@ use core::{
 
 pub mod debug;
 pub mod mem;
+pub mod maybe_waker;
 
 extern crate alloc;
 

@@ -4,12 +4,13 @@ use alloc::{
     rc::{Rc, Weak},
     vec::Vec,
 };
-use kernel_lock::shared_refcell::RefCell;
 use core::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, Waker},
 };
+
+use kernel_lock::shared_refcell::RefCell;
 
 use crate::non_send_waker::{RcWake, RcWakeInto};
 
@@ -97,7 +98,7 @@ impl LocalExecutor {
 
     fn wake_pending(&mut self) -> bool {
         let q: VecDeque<usize> = core::mem::take(&mut *self.wake_queue.borrow_mut());
-        
+
         // Remove duplicates
         let is_empty = q.is_empty();
         let mut seen = Vec::with_capacity(q.capacity());
@@ -121,7 +122,8 @@ impl LocalExecutor {
         let index = if let Some(slot) = self
             .tasks
             .iter_mut()
-            .enumerate().find(|(_, val)| val.is_none())
+            .enumerate()
+            .find(|(_, val)| val.is_none())
         {
             slot.1.replace(task);
             slot.0

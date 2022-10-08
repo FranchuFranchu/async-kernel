@@ -1,2 +1,2 @@
 pub mod mutex;
-pub use mutex::{RefCell, BorrowMut};
+pub use mutex::{BorrowMut, RefCell};
