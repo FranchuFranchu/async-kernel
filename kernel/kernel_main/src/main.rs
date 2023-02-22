@@ -47,7 +47,7 @@ use kernel_cpu::{
         PagingMode,
     },
     in_interrupt_context, read_satp, read_sie, read_sip, read_sscratch, read_sstatus, read_time,
-    write_satp, write_sie, write_sscratch, write_sstatus, write_stvec, read_satp_flags,
+    write_satp, write_sie, write_sscratch, write_sstatus, write_stvec, read_satp_flags, load_hartid,
 };
 use kernel_executor::{LocalExecutor, SendExecutor, SendExecutorHandle};
 use kernel_paging::Paging;
@@ -429,7 +429,6 @@ async fn common_hart_code() -> ! {
     let plic = Plic0::new_with_addr(GAP.load(Ordering::Relaxed) + 0x0c00_0000);
 
     plic.set_threshold(0);
-    plic.set_enabled(10, true);
     plic.set_priority(10, 3);
     unsafe {
         (0x1000_0001 as *mut u8)
@@ -438,63 +437,17 @@ async fn common_hart_code() -> ! {
     }
 
     println!("{:?}", "ready plic");
-
-    HartLocals::current()
-        .local_executor
-        .as_ref()
-        .unwrap()
-        .spawn(Box::new(Box::pin(async {
+    
+    if load_hartid() != 0 {
+        HartLocals::current().local_executor.as_ref().unwrap().spawn(Box::new(Box::pin(async {
+            
             assert!(read_sie() == 0);
             fn test() {
                 enable_interrupts();
-                
-                unsafe {
-                    let array = [10u8, 3u8, 4u8];
-                    let ptr = &array;
-                    
-                    crate::asm::do_supervisor_syscall_3(0x13, ptr.as_ptr() as usize, ptr.len() as usize, 1);
-                }
-                
-                let mut string = alloc::string::String::new();
-                let slice: Box<[core::mem::MaybeUninit<u8>]> = boxed_slice_with_alignment_uninit(4096, 4096);
-                unsafe {
-                    crate::asm::do_supervisor_syscall_3(0x20, slice.as_ptr() as _, 4096, 1);
-                    unsafe {
-                        let q = core::slice::from_raw_parts(slice.as_ptr() as *const u8, 4096);
-                        println!("{:?}", q);
-                    }
-                }
                 loop {
-                    let id = unsafe { do_supervisor_syscall_2(10, 10, 0) };
-                    unsafe { do_supervisor_syscall_1(2, id.0) };
-                    do_supervisor_syscall_0(3);
-                    
-                    let c = unsafe {
-                        ((0x1000_0000 as *const u8).add(GAP.load(Ordering::Relaxed)))
-                            .read_volatile()
-                    } as char;
-
-                    let c = if c == '\r' { '\n' } else { c };
-                    if c == 0x7f as char {
-                        // 0x7f == delete
-                        // 0x08 == backspace (go back 1 column)
-                        if !string.is_empty() {
-                            print!("\x08 \x08");
-                            string.pop();
-                        }
-                    } else {
-                        string.push(c);
-                        print!("{}", c);
-                    }
-
-                    if c == '\n' {
-                        print!("You typed: {}", string);
-                        string.clear();
-                    }
-                    //println!("Char {}", c);
+                    println!("{:?}", "a calculatioN!");
+                    kernel_cpu::wfi();
                 }
-                unreachable!();
-                loop {}
             }
             disable_interrupts();
             let mut process = Process::new_supervisor(
@@ -504,7 +457,6 @@ async fn common_hart_code() -> ! {
                         let table = kernel_paging::Table::<8>::from_satp(process.trap_frame.satp, phys_to_virt).as_ref().unwrap().clone();
                         let table = table.clone_with(phys_to_virt, virt_to_phys);
                         process.trap_frame.satp = table.to_satp_base_addr(virt_to_phys) | read_satp_flags();
-                        println!("{:x}", process.trap_frame.satp);
                         process.page_table = Some(alloc::sync::Arc::new(table));
                     };
                 },
@@ -517,7 +469,7 @@ async fn common_hart_code() -> ! {
             loop {
                 // Make sure the process is ready for waking up
                 wait_until_process_is_woken(&process).await;
-                set_relative_timer(0x10010_0000);
+                set_relative_timer(0x00010_0000);
                 // This has the SIE bit disabled because
                 // the interrupt will get triggered in the idle task.
                 process.lock().trap_frame.sie = (!read_sip()) & 0x022;
@@ -528,7 +480,93 @@ async fn common_hart_code() -> ! {
                 .unwrap();
             }
         })));
+    } else {
 
+        plic.set_enabled(10, true);
+        HartLocals::current()
+            .local_executor
+            .as_ref()
+            .unwrap()
+            .spawn(Box::new(Box::pin(async {
+                assert!(read_sie() == 0);
+                fn test() {
+                    enable_interrupts();
+                    
+                    use alloc::string::String;
+                    
+                    fn getchar() -> char {
+                        let id = unsafe { do_supervisor_syscall_2(10, 10, 0) };
+                        unsafe { do_supervisor_syscall_1(2, id.0) };
+                        do_supervisor_syscall_0(3);
+                        
+                        (unsafe {
+                            ((0x1000_0000 as *const u8).add(GAP.load(Ordering::Relaxed)))
+                                .read_volatile()
+                        }) as char
+                    }
+                    fn readline() -> String {
+                    	let mut string = String::new();
+                    	loop {
+                            let c = getchar();
+							let c = if c == '\r' { '\n' } else { c };
+							if c == 0x7f as char {
+								// 0x7f == delete
+								// 0x08 == backspace (go back 1 column)
+								if !string.is_empty() {
+									print!("\x08 \x08");
+									string.pop();
+								}
+							} else {
+								string.push(c);
+								print!("{}", c);
+							}
+							if c == '\n' {
+							    return string;
+							}
+                    	}
+                    }
+                    
+                    loop {
+                        let r = readline();
+                        println!("You typed: {}", r);
+                        //println!("Char {}", c);
+                    }
+                    unreachable!();
+                    loop {}
+                }
+                disable_interrupts();
+                let mut process = Process::new_supervisor(
+                    |mut process| {
+                        process.name = Some(alloc::string::String::from("hello world"));
+                        unsafe {
+                            let table = kernel_paging::Table::<8>::from_satp(process.trap_frame.satp, phys_to_virt).as_ref().unwrap().clone();
+                            let table = table.clone_with(phys_to_virt, virt_to_phys);
+                            process.trap_frame.satp = table.to_satp_base_addr(virt_to_phys) | read_satp_flags();
+                            println!("{:x}", process.trap_frame.satp);
+                            process.page_table = Some(alloc::sync::Arc::new(table));
+                        };
+                    },
+                    test,
+                    phys_to_virt,
+                    virt_to_phys,
+                );
+                //process.lock().trap_frame.satp = q;
+
+                loop {
+                    // Make sure the process is ready for waking up
+                    wait_until_process_is_woken(&process).await;
+                    set_relative_timer(0x0010_0000);
+                    // This has the SIE bit disabled because
+                    // the interrupt will get triggered in the idle task.
+                    process.lock().trap_frame.sie = (!read_sip()) & 0x022;
+                    process.lock().switch_to_and_come_back();
+                    process = do_syscall_and_drop_if_exit(process, |p| {
+                        handle_come_back_from_process(Some(p))
+                    })
+                    .unwrap();
+                }
+            })));
+    }
     let handle = HartLocals::current()
         .local_executor
         .as_ref()

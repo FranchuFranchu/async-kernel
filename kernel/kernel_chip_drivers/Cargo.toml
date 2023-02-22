@@ -11,4 +11,5 @@ kernel_lock = { path = "../kernel_lock" }
 num_enum = {version = "0.5", default-features = false}
 kernel_printer = { path = "../kernel_printer" }
 kernel_cpu = { path = "../kernel_cpu" }
+kernel_util = { path = "../kernel_util" }
 log = "*"

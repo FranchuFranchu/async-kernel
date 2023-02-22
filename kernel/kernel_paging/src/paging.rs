@@ -95,11 +95,11 @@ where
 /// # }
 /// ```
 pub const fn get_vpn_offset(i: usize, ptesize: usize) -> u8 {
-    (12 + (i * (12 - ptesize.log2()) as usize)) as u8
+    (12 + (i * (12 - ptesize.ilog2()) as usize)) as u8
 }
 
 pub const fn get_entry_power(ptesize: usize) -> usize {
-    2usize.pow(12 - ptesize.log2()) - 1
+    2usize.pow(12 - ptesize.ilog2()) - 1
 }
 
 pub const fn get_entry_count(ptesize: usize) -> usize {

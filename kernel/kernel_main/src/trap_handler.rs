@@ -22,7 +22,7 @@ pub fn handle_interrupt(mut process: Option<&mut Process>, cause: usize) {
     use kernel_cpu::csr::cause::*;
     let cause = if process.is_none() {
         // If the process is None, we only care about making the interrupt nonpending
-        read_sip().log2() as usize
+        read_sip().ilog2() as usize
     } else {
         cause as usize
     };

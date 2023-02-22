@@ -6,6 +6,7 @@ use kernel_lock::spin::RwLock;
 use kernel_lock::spin::Mutex;
 use kernel_paging::PartialMapping;
 use kernel_process::{Process, ProcessContainer, ProcessState};
+use kernel_syscall::get_syscall_args;
 use kernel_util::boxed_slice_with_alignment;
 use kernel_util::maybe_waker::MaybeWaker;
 use kernel_util::maybe_waker::wake_all_that_are_ready;
@@ -50,8 +51,12 @@ impl BufferQueue {
     /// `f` is a function that takes in a buffer, and returns either an Ok with some custom data, or gives back the buffer as an error
     fn try_take_buffer<T>(&mut self, mut f: impl FnMut(&mut Self, InflightBuffer) -> Result<T, InflightBuffer>, waker: MaybeWaker) -> Option<T> {
         while let Some(buffer) = self.waiting_buffers.pop_front() {
+            let waker = buffer.claim.clone();
             match f(self, buffer) {
-                Ok(data) => return Some(data),
+                Ok(data) => {
+                    waker.wake();
+                    return Some(data)
+                },
                 Err(buffer) => {
                     // Put the buffer back in its place and continue on to the next buffer in the queue
                     self.waiting_buffers.push_front(buffer);       
@@ -85,7 +90,7 @@ pub fn handle_syscall(process: &mut Process) {
             process.wake_on_paused.lock().state = ProcessState::Exited;
         }
         2 => {
-            // Register a future (get notified when it's done).
+            // Enable a future (get notified when it's done).
             let future_id = args[0];
             
             process.wake_on_paused.lock().enable_source(future_id as u64);
@@ -120,16 +125,20 @@ pub fn handle_syscall(process: &mut Process) {
             // 0x12 - Mutably borrow out a buffer.
             // 0x13 - Copy out a buffer.
             
+            // Returns a future that will be ready when it's Ready
+            
             let virtual_start_addr = args[0];
             let virtual_size = args[1];
             let target_buffer_queue = args[2];
             
+            drop(args);
             println!("{:?}", process.trap_frame.satp);
             let mut process_page_table = unsafe { crate::paging_from_satp(process.trap_frame.satp) };
             let partial_mapping = unsafe {
                 process_page_table.copy_partial_mapping(virtual_start_addr, virtual_size)
             };
             
+            let (waker, future_id) = process.waker();
             let buffer = if syscall_number == 0x13 {
                 println!("{:?}", partial_mapping);
                 let collected_data = unsafe {
@@ -143,7 +152,7 @@ pub fn handle_syscall(process: &mut Process) {
                 InflightBuffer {
                     contents: InflightBufferContents::Copied(collected_data),
                     mode: InflightBufferMode::Copied,
-                    claim: process.waker().0.into(),
+                    claim: waker.into(),
                 }
             } else {
                 assert!(virtual_start_addr & 4095 == 0);
@@ -165,7 +174,7 @@ pub fn handle_syscall(process: &mut Process) {
                 InflightBuffer {
                     contents: InflightBufferContents::Mapped(partial_mapping),
                     mode,
-                    claim: process.waker().0.into(),
+                    claim: waker.into(),
                 }
             };
                 
@@ -180,6 +189,9 @@ pub fn handle_syscall(process: &mut Process) {
             buffer_queue.lock().send_buffer(buffer);
             
             println!("{:?}", lock);
+            
+            let args = get_syscall_args(process);
+            args[0] = future_id as usize;
         }
         0x20 | 0x21 => {
             // (virtual_addr, max_size, queue_id) -> (status, real_size, remaining_buffers, future_id (or 0))

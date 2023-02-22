@@ -82,6 +82,8 @@ impl Plic0 {
         // is a bit (N % 32) of word (N / 32)
         let enables_base = self.base_addr + 0x2000;
         let target_base = enables_base + self.context_number * 0x80;
+        kernel_util::println!("Base {:x}", target_base);
+        kernel_util::println!("Base {:x}", get_context_number());
         let target_base = target_base as *mut u32;
         let this_register = unsafe { target_base.add((interrupt / 32) as usize) };
         if enable {

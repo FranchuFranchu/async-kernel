@@ -12,6 +12,7 @@ kernel_allocator = { path = "../kernel_allocator" }
 kernel_executor = { path = "../kernel_executor" }
 kernel_lock = { path = "../kernel_lock" }
 kernel_printer = { path = "../kernel_printer" }
+kernel_api = { path = "../kernel_api" }
 kernel_process = { path = "../kernel_process" }
 kernel_paging = { path = "../kernel_paging" }
 kernel_sbi = { path = "../kernel_sbi" }
