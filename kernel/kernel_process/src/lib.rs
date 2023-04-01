@@ -59,6 +59,7 @@ pub struct ProcessWakerStruct {
     wakers: Vec<MaybeWaker>,
     waking_sources_enabled: BTreeMap<u64, bool>,
     wake_on_enable: BTreeSet<u64>,
+    woken_sources: BTreeMap<u64, bool>,
     pub state: ProcessState,
 }
 
@@ -73,11 +74,17 @@ impl ProcessWakerStruct {
             let wakers = this.lock().take_wakers();
             let wakers: Vec<MaybeWaker> = wake_all_that_are_ready(wakers.into_iter()).collect();
             this.lock().wakers.extend(wakers.into_iter());
+            this.lock().woken_sources.insert(source, true);
             true
         } else {
             false
         }
     }
+    
+    pub fn is_woken(&self, source: u64) -> Option<bool> {
+        self.woken_sources.get(&source).copied()
+    }
+
 
     fn add_waker(&mut self, waker: MaybeWaker) {
         self.wakers.push(waker);
@@ -107,6 +114,7 @@ impl ProcessWakerStruct {
     
     fn new_disabled_source(&mut self) -> u64 {
         let id = self.generate_source_id();
+        self.woken_sources.insert(id, false);
         self.waking_sources_enabled.insert(id, false);
         id
     }

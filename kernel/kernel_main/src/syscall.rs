@@ -6,6 +6,7 @@ use kernel_lock::spin::RwLock;
 use kernel_lock::spin::Mutex;
 use kernel_paging::PartialMapping;
 use kernel_process::{Process, ProcessContainer, ProcessState};
+use kernel_syscall::SyscallNumbers;
 use kernel_syscall::get_syscall_args;
 use kernel_util::boxed_slice_with_alignment;
 use kernel_util::maybe_waker::MaybeWaker;
@@ -83,22 +84,31 @@ pub static INFLIGHT_BUFFERS: RwLock<BTreeMap<usize, Mutex<BufferQueue>>> = RwLoc
 pub fn handle_syscall(process: &mut Process) {
     process.trap_frame.pc += 2;
     let args = kernel_syscall::get_syscall_args(process);
-    let syscall_number = *args.last().unwrap();
+    let syscall_number = SyscallNumbers::from(*args.last().unwrap());
     
     match syscall_number {
-        1 => {
+        SyscallNumbers::Exit => {
             process.wake_on_paused.lock().state = ProcessState::Exited;
         }
-        2 => {
+        SyscallNumbers::EnableFuture => {
             // Enable a future (get notified when it's done).
             let future_id = args[0];
             
             process.wake_on_paused.lock().enable_source(future_id as u64);
         }
-        3 => {
+        SyscallNumbers::Sleep => {
             process.sleep();
         }
-        10 => {
+        SyscallNumbers::PollFuture => {
+            // Poll a future
+            let future_id = args[0] as u64;
+            match process.wake_on_paused.lock().is_woken(future_id) {
+                None => 0,
+                Some(false) => 1,
+                Some(true) => 2,
+            };
+        }
+        SyscallNumbers::WaitForInterrupt => {
             if args[1] != 0 {
                 // Timer interrupt
                 let _for_time = args[1];
@@ -119,7 +129,10 @@ pub fn handle_syscall(process: &mut Process) {
                 args[0] = future_id as usize;
             }
         }
-        0x10 | 0x11 | 0x12 | 0x13 => {
+        SyscallNumbers::MoveBufferOut 
+        | SyscallNumbers::BorrowBufferOut 
+        | SyscallNumbers::BorrowMutBufferOut 
+        | SyscallNumbers::CopyBufferOut => {
             // 0x10 - Move out a buffer.
             // 0x11 - Borrow out a buffer.
             // 0x12 - Mutably borrow out a buffer.
@@ -139,7 +152,7 @@ pub fn handle_syscall(process: &mut Process) {
             };
             
             let (waker, future_id) = process.waker();
-            let buffer = if syscall_number == 0x13 {
+            let buffer = if syscall_number == SyscallNumbers::CopyBufferOut {
                 println!("{:?}", partial_mapping);
                 let collected_data = unsafe {
                     partial_mapping.read_iter(crate::phys_to_virt).fold(alloc::vec::Vec::new(), |mut accum, new| {
@@ -159,15 +172,15 @@ pub fn handle_syscall(process: &mut Process) {
                 assert!(virtual_size & 4095 == 0);
                 println!("{:?}", partial_mapping);
                 // Now that we have a partial mapping, we'll choose what to do with it
-                if syscall_number == 0x10 || syscall_number == 0x12 {
+                if syscall_number == SyscallNumbers::MoveBufferOut || syscall_number == SyscallNumbers::BorrowMutBufferOut {
                     // The buffer is being moved or borrowed out. Therefore we want to erase the mapping from the source process's page table
                     process_page_table.map(virtual_start_addr, virtual_start_addr, virtual_size, 0);
                 }
                 
                 let mode = match syscall_number {
-                    0x10 => InflightBufferMode::Own,
-                    0x11 => InflightBufferMode::Borrow,
-                    0x12 => InflightBufferMode::BorrowMut,
+                    SyscallNumbers::MoveBufferOut => InflightBufferMode::Own,
+                    SyscallNumbers::BorrowBufferOut => InflightBufferMode::Borrow,
+                    SyscallNumbers::BorrowMutBufferOut => InflightBufferMode::BorrowMut,
                     _ => unreachable!(),
                 };
                 
@@ -193,8 +206,9 @@ pub fn handle_syscall(process: &mut Process) {
             let args = get_syscall_args(process);
             args[0] = future_id as usize;
         }
-        0x20 | 0x21 => {
-            // (virtual_addr, max_size, queue_id) -> (status, real_size, remaining_buffers, future_id (or 0))
+        SyscallNumbers::MapBufferIn 
+        | SyscallNumbers::CopyBufferIn => {
+            // (virtual_addr, max_size, queue_id) -> (status, real_size, remaining_buffers, future_id (or 0), source_id)
             
             // 0x20 is move the page table mapping into the virtual area specified. This means 
             // that the area may not actually be mapped!
@@ -251,14 +265,22 @@ pub fn handle_syscall(process: &mut Process) {
             };
             let (status, real_size, remaining_buffers) = closure(map_to_virtual_address, maximum_size, source_buffer_queue);
             
+            let mut set_future_id = 0;
+            if status == 0 {
+                let mut lock = INFLIGHT_BUFFERS.write();
+                if let Some(queue_mutex) = lock.get(&source_buffer_queue) {
+                    let mut queue = queue_mutex.lock();
+                    let (waker, future_id) = process.waker();
+                    queue.waiting_wakers.push_back(waker);
+                    set_future_id = future_id as usize;
+                }
+            }
             let args = kernel_syscall::get_syscall_args(process);
             args[0] = status;
             args[1] = real_size;
             args[2] = remaining_buffers;
+            args[3] = set_future_id;
             
-            if status == 0 {
-                
-            }
         },
         _ => {
             panic!("Unknown syscall {}!", args.last().unwrap());

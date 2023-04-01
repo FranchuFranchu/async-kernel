@@ -29,6 +29,7 @@ else
 	export QEMUOPTS="-nographic $QEMUOPTS"
 fi
 
+
 du -h kernel_payload.bin
 
 qemu-system-riscv$BITS $QEMUOPTS \

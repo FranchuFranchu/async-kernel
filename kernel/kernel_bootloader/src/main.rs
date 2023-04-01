@@ -110,6 +110,8 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
     }
 
     unsafe { write_stvec((s_trap_vector as usize).bitand(!3).add(4)) };
+    
+    println!("Reached bootloader.");
 
     // TODO: Determine the paging scheme that will be used
     let sv_bits = 39;
@@ -149,6 +151,8 @@ pub extern "C" fn pre_main(hartid: usize, opaque: usize) {
 
     let start: usize = unsafe { &_heap_start as *const _ as usize };
     let end: usize = start + 0x10000;
+    
+    println!("Bootloader allocator spans from {:x} to {:x}", start, end);
 
     kernel_allocator::init_from_pointers(start as *const _, end as *const _);
     let padded_len = ((ALIGNED_BYTES.len()) / 4096 + 1) * 4096;

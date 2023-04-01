@@ -1,0 +1,10 @@
+[package]
+name = "kernel_services"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+kernel_api = {path = "../kernel_api"}
+rkyv = {version = "*", default-features = false, features = ["size_32"]}

@@ -10,6 +10,7 @@ members = [
 	"kernel_send_generic",
 	"kernel_syscall",
 	"kernel_resource_map",
+	"kernel_services",
 	"kernel_process",
 	"kernel_api"
 ]

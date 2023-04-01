@@ -36,7 +36,7 @@ use core::{
     ffi::c_void,
     hint::black_box,
     sync::atomic::{AtomicUsize, Ordering},
-    task::Waker,
+    task::Waker, fmt::Write,
 };
 
 use fdt::Fdt;
@@ -47,14 +47,14 @@ use kernel_cpu::{
         PagingMode,
     },
     in_interrupt_context, read_satp, read_sie, read_sip, read_sscratch, read_sstatus, read_time,
-    write_satp, write_sie, write_sscratch, write_sstatus, write_stvec, read_satp_flags, load_hartid,
+    write_satp, write_sie, write_sscratch, write_sstatus, write_stvec, read_satp_flags, load_hartid, read_sp,
 };
 use kernel_executor::{LocalExecutor, SendExecutor, SendExecutorHandle};
 use kernel_paging::Paging;
 use kernel_process::Process;
 use kernel_syscall::do_syscall_and_drop_if_exit;
 use kernel_trap_frame::TrapFrame;
-use kernel_util::{boxed_slice_with_alignment_uninit, boxed_slice_with_alignment};
+use kernel_util::{boxed_slice_with_alignment_uninit, boxed_slice_with_alignment, debug::Uart};
 use sbi::SbiError;
 
 use crate::{
@@ -169,6 +169,27 @@ pub fn virt_to_phys(virt_addr: usize) -> usize {
     virt_addr - GAP.load(Ordering::Relaxed)
 }
 
+pub unsafe fn do_memory_probe(start: usize, end: usize) {
+    println!("Starting memory probe...");
+    println!("- Start address: {:x}", start);
+    println!("- End address: {:x}", end);
+    for i in (start..end).step_by(0x1000) {
+        let ptr = (i as *mut u8);
+        if i % 0x10000 == 0 {
+            println!("Probe 0x{:x}", i);
+        }
+        ptr.write_volatile(0x55);
+        if ptr.read_volatile() != 0x55 {
+            println!("{:?}", "nope!");
+            loop {
+                
+            } 
+        }
+    }
+    //core::arch::asm!("unimp");
+    println!("Completed memory probe");
+}
+
 #[no_mangle]
 pub fn main(
     hartid: usize,
@@ -190,9 +211,8 @@ pub fn main(
 
     SV_BITS.store(sv_bits, Ordering::Release);
     GAP.store(0usize.wrapping_sub(1 << (sv_bits - 1)), Ordering::Release);
-
-    unsafe { (0x1000_0000 as *mut u8).write_volatile(67) };
-    unsafe { (0x1000_0000 as *mut u8).write_volatile(0xa) };
+    
+    kernel_util::debug::Uart::from_address(0x1000_0000 as *mut u8).write_str("Reached early kernel code.\n");
 
     let kernel_phys = unsafe {
         let mut table = ((read_satp() << 12) as *mut Table<_>).as_mut().unwrap();
@@ -204,22 +224,24 @@ pub fn main(
         sv39.query(0xffffffff8000_0000).unwrap()
     };
     KERNEL_START_PHYSICAL.store(kernel_phys, Ordering::Relaxed);
-
-    println!(
-        "{:x} {:x} {:x} {:x}",
-        kernel_phys,
-        GAP.load(Ordering::Relaxed),
-        4096,
-        kernel_phys + GAP.load(Ordering::Relaxed)
-    );
-
+    
+    
+    let gap = GAP.load(Ordering::Relaxed);
+    println!("Physical address of kernel: {:x}", kernel_phys);
+    println!("Gap: {:x}", gap);
+    println!("Computed virtual address of kernel: {:x}", kernel_phys + gap);
+    println!("Kernel length in bytes: 0x{:x}", kernel_len);
+    println!("Computer kernel end: {:x}", kernel_phys + gap + kernel_len);
+    println!("Stack virtual address: {:x}", _stack_start_virtual);
+    println!("Stack pointer: {:x}", read_sp());
+    
     // kernel_phys + GAP.load(Ordering::Relaxed);
     // Every time i've tried changing this, it's cursed.
-    let start: usize = 0xffffffc08300_0000;
-    assert!(start > kernel_phys + GAP.load(Ordering::Relaxed));
-    assert!(kernel_len < 0x50_0000);
+    let start: usize = 0xffffffc08400_0000;
+    //assert!(start > kernel_phys + GAP.load(Ordering::Relaxed));
+    //assert!(kernel_len < 0x50_0000);
     let end: usize = 0xffffffc08700_0000;
-
+    //unsafe { do_memory_probe(start, end) }
     kernel_allocator::init_from_pointers(start as *const _, end as *const _);
 
     println!("{:?}", "Reached kernel!");
@@ -528,8 +550,7 @@ async fn common_hart_code() -> ! {
                     
                     loop {
                         let r = readline();
-                        println!("You typed: {}", r);
-                        //println!("Char {}", c);
+                        println!("You typed: {:?}", r);
                     }
                     unreachable!();
                     loop {}
@@ -609,24 +630,8 @@ fn syscall_on_interrupt_disabled() {
     loop {}
 }
 
-pub struct Uart {
-    address: *mut u8,
-}
 
-impl core::fmt::Write for Uart {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        for i in s.bytes() {
-            unsafe { self.address.write(i) }
-        }
-        Ok(())
-    }
-}
-
-pub fn get_uart() -> Uart {
-    Uart {
-        address: (GAP.load(Ordering::Relaxed) + 0x1000_0000usize) as _,
-    }
-}
+pub use kernel_util::debug::get_uart;
 
 #[macro_export]
 macro_rules! print

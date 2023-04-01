@@ -4,10 +4,20 @@ use kernel_cpu::Registers;
 use kernel_process::{Process, ProcessContainer, ProcessState};
 use num_enum::*;
 
-#[derive(FromPrimitive, IntoPrimitive)]
+#[derive(FromPrimitive, IntoPrimitive, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(usize)]
 pub enum SyscallNumbers {
     Exit = 1,
+    EnableFuture = 2,
+    Sleep = 3,
+    PollFuture = 4,
+    WaitForInterrupt = 10,
+    MoveBufferOut = 0x10,
+    BorrowBufferOut = 0x11,
+    BorrowMutBufferOut = 0x12,
+    CopyBufferOut = 0x13,
+    MapBufferIn = 0x20,
+    CopyBufferIn = 0x21,
     #[default]
     Unknown,
 }

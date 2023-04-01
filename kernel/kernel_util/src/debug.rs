@@ -11,6 +11,14 @@ impl core::fmt::Write for Uart {
     }
 }
 
+impl Uart {
+    
+    pub fn from_address(address : *mut u8) -> Uart {
+        Uart { address }
+    }
+    
+}
+
 pub fn get_uart() -> Uart {
     Uart {
         address: 0xffff_ffc0_1000_0000u64 as _,

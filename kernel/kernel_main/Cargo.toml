@@ -17,6 +17,7 @@ kernel_process = { path = "../kernel_process" }
 kernel_paging = { path = "../kernel_paging" }
 kernel_sbi = { path = "../kernel_sbi" }
 kernel_send_generic = { path = "../kernel_send_generic" }
+kernel_services = { path = "../kernel_services" }
 kernel_util = { path = "../kernel_util" }
 kernel_chip_drivers = { path = "../kernel_chip_drivers" }
 kernel_resource_map = { path = "../kernel_resource_map" }
